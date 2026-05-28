@@ -1,0 +1,1814 @@
+<!-- 
+  部署说明：搜索 plain-meadow-437c.dishkun2012.workers.dev 替换为你的 Cloudflare Worker 域名
+  模块1: 直接调用 api.goteborg.com (支持CORS)  
+  模块2: 通过 Worker 代理 kompissverige.se
+  模块3: 通过 Worker 代理 goteborg.se SSR (支持CORS)
+  所有模块都有内嵌数据兜底，Worker 不可用时自动使用缓存
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="哥德堡活动">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="manifest" href="manifest.json">
+<title>哥德堡活动</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f0f4f8;
+    color: #1a202c;
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+  .header {
+    background: linear-gradient(135deg, #1e3a5f, #2d6aa0);
+    color: white;
+    padding: 2rem 1.5rem;
+    text-align: center;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .header h1 { font-size: 1.8rem; font-weight: 700; letter-spacing: 0.05em; }
+  .header .subtitle { font-size: 0.85rem; opacity: 0.8; margin-top: 0.3rem; }
+
+  .controls {
+    max-width: 960px;
+    margin: 1.5rem auto;
+    padding: 0 1rem;
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+  }
+  .btn {
+    padding: 0.75rem 2rem;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .btn-primary {
+    background: #2d6aa0;
+    color: white;
+    box-shadow: 0 2px 8px rgba(45,106,160,0.3);
+  }
+  .btn-primary:hover { background: #1e3a5f; transform: translateY(-1px); }
+  .btn-primary:disabled { background: #94a3b8; cursor: not-allowed; transform: none; }
+  .btn-outline {
+    background: white;
+    color: #2d6aa0;
+    border: 2px solid #2d6aa0;
+  }
+  .btn-outline:hover { background: #e8f0fe; }
+  .btn-outline.active { background: #2d6aa0; color: white; }
+
+  .progress-container {
+    max-width: 960px;
+    margin: 1rem auto;
+    padding: 0 1rem;
+    display: none;
+  }
+  .progress-container.show { display: block; }
+  .progress-bar {
+    height: 8px;
+    background: #e2e8f0;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #2d6aa0, #48bb78);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+    width: 0%;
+  }
+  .progress-text {
+    font-size: 0.85rem;
+    color: #64748b;
+    margin-top: 0.5rem;
+    text-align: center;
+  }
+  .progress-detail {
+    font-size: 0.8rem;
+    color: #94a3b8;
+    margin-top: 0.2rem;
+    text-align: center;
+    max-height: 4em;
+    overflow: hidden;
+  }
+
+  .stats-bar {
+    max-width: 960px;
+    margin: 1rem auto;
+    padding: 0 1rem;
+    display: none;
+    gap: 1rem;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .stats-bar.show { display: flex; }
+  .stat {
+    background: white;
+    padding: 0.6rem 1.2rem;
+    border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .stat .emoji { font-size: 1.2rem; }
+  .stat strong { color: #2d6aa0; }
+
+  .container {
+    max-width: 960px;
+    margin: 0 auto 3rem;
+    padding: 0 1rem;
+  }
+
+  .date-group {
+    margin-bottom: 1.5rem;
+  }
+  .date-label {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #1e3a5f;
+    padding: 0.5rem 0.8rem;
+    background: linear-gradient(135deg, #dbeafe, #e0e7ff);
+    border-radius: 8px;
+    margin-bottom: 0.6rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .date-label .count {
+    background: #2d6aa0;
+    color: white;
+    font-size: 0.75rem;
+    padding: 0.15rem 0.55rem;
+    border-radius: 10px;
+  }
+
+  .event-card {
+    background: white;
+    border-radius: 10px;
+    padding: 1rem 1.2rem;
+    margin-bottom: 0.5rem;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+    transition: box-shadow 0.2s;
+    border-left: 4px solid #e2e8f0;
+  }
+  .event-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+  .event-card.free { border-left-color: #48bb78; }
+  .event-card.paid { border-left-color: #f6ad55; }
+
+  .event-title {
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin-bottom: 0.35rem;
+  }
+  .event-title a {
+    color: #1e3a5f;
+    text-decoration: none;
+    transition: color 0.15s;
+  }
+  .event-title a:hover { color: #2d6aa0; text-decoration: underline; }
+  .event-title .cn { color: #64748b; font-weight: 400; font-size: 0.95rem; }
+
+  .event-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.2rem;
+    font-size: 0.85rem;
+    color: #64748b;
+    margin-bottom: 0.3rem;
+  }
+  .event-meta span { display: flex; align-items: center; gap: 0.25rem; }
+  .badge {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .badge-free { background: #c6f6d5; color: #22543d; }
+  .badge-paid { background: #fefcbf; color: #744210; }
+  .badge-multi { background: #e0e7ff; color: #3730a3; }
+
+  .event-summary {
+    font-size: 0.85rem;
+    color: #94a3b8;
+    margin-top: 0.2rem;
+    font-style: italic;
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 4rem 2rem;
+    color: #94a3b8;
+  }
+  .empty-state .icon { font-size: 3rem; margin-bottom: 1rem; }
+
+  .spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  @media (max-width: 600px) {
+    .header h1 { font-size: 1.3rem; }
+    .event-meta { flex-direction: column; gap: 0.2rem; }
+    .controls { flex-direction: column; }
+    .btn { width: 100%; justify-content: center; }
+  }
+  
+  .float-btn {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 999;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: #1e3a5f;
+    color: white;
+    border: none;
+    font-size: 1.3rem;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.2s;
+  }
+  .float-btn:hover { transform: scale(1.1); }
+  .float-btn.collapsed { background: #94a3b8; }
+  
+  .load-more-btn {
+    display: block;
+    margin: 1rem auto;
+    padding: 0.6rem 2rem;
+    background: #e2e8f0;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    color: #475569;
+  }
+  .load-more-btn:hover { background: #cbd5e1; }
+  .sticky-collapse {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 999;
+    padding: 0.5rem 1rem;
+    background: #1e3a5f;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  }
+  .sticky-collapse:hover { background: #2d6aa0; }
+
+</style>
+</head>
+<body>
+
+<button class="sticky-collapse" id="floatCollapse" onclick="toggleCurrentModule()" style="display:none">📋</button>
+
+<button class="sticky-collapse" id="btnM1" onclick="toggleOneModule('eventsContainer','btnM1','Gothenburg 活动')" style="bottom:20px">📋 收起Gothenburg 活动</button>
+<button class="sticky-collapse" id="btnM2" onclick="toggleOneModule('kompisEventsContainer','btnM2','Kompis 活动')" style="bottom:64px">📋 收起Kompis 活动</button>
+<button class="sticky-collapse" id="btnM3" onclick="toggleOneModule('gbgEventsContainer','btnM3','市政厅活动')" style="bottom:108px">📋 收起市政厅活动</button>
+
+<div class="header">
+  <h1>🎭 哥德堡活动</h1>
+  <div class="subtitle">来自 gothenburg.com 的活动日历 · 选择日期查看未来活动</div>
+</div>
+
+<div class="controls" style="flex-wrap:wrap;gap:0.6rem">
+  <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.9rem;color:#475569">
+    起始日 <input type="date" id="m1StartDate" value="2026-05-28" style="padding:0.4rem 0.6rem;border:1px solid #cbd5e1;border-radius:6px;font-size:0.9rem">
+  </label>
+  <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.9rem;color:#475569">
+    结束日 <input type="date" id="m1EndDate" value="2026-06-03" style="padding:0.4rem 0.6rem;border:1px solid #cbd5e1;border-radius:6px;font-size:0.9rem">
+  </label>
+  <button class="btn btn-primary" id="fetchBtn" onclick="fetchEvents()">
+    🔄 获取哥德堡活动
+  </button>
+  <button class="btn btn-outline" id="filterFreeBtn" onclick="toggleFreeFilter()">
+    🆓 只看免费活动
+  </button>
+</div>
+
+<div class="progress-container" id="progressContainer">
+  <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+  <div class="progress-text" id="progressText">准备中...</div>
+  <div class="progress-detail" id="progressDetail"></div>
+</div>
+
+<div class="stats-bar" id="statsBar">
+  <div class="stat"><span class="emoji">📊</span> 共 <strong id="statTotal">0</strong> 个活动</div>
+  <div class="stat"><span class="emoji">🆓</span> 免费 <strong id="statFree">0</strong> 个</div>
+  <div class="stat"><span class="emoji">🎫</span> 收费 <strong id="statPaid">0</strong> 个</div>
+</div>
+
+<div class="container" id="eventsContainer" style="position:relative">
+  <div class="empty-state">
+    <div class="icon">📅</div>
+    <p>👆 点击上方「获取哥德堡活动」按钮开始</p>
+  </div>
+</div>
+
+<!-- ========== 模块2: Kompis Sverige ========== -->
+<div class="header" style="margin-top:2rem;background:linear-gradient(135deg,#c0262c,#e53e3e)">
+  <h1>🤝 Kompis Sverige · 哥德堡活动</h1>
+  <div class="subtitle">来自 kompissverige.se 的免费社交活动 · 结交新朋友，练习瑞典语</div>
+</div>
+
+<div class="controls">
+  <button class="btn btn-primary" id="fetchKompisBtn" onclick="fetchKompisEvents()" style="background:#c0262c">
+    🔄 获取 Kompis 活动
+  </button>
+  <button class="btn btn-outline" id="filterKompisBtn" onclick="toggleKompisFilter()">
+    🟢 只看可报名活动
+  </button>
+</div>
+
+<div class="progress-container" id="kompisProgressContainer">
+  <div class="progress-bar"><div class="progress-fill" id="kompisProgressFill"></div></div>
+  <div class="progress-text" id="kompisProgressText">准备中...</div>
+  <div class="progress-detail" id="kompisProgressDetail"></div>
+</div>
+
+<div class="stats-bar" id="kompisStatsBar">
+  <div class="stat"><span class="emoji">📊</span> 共 <strong id="kompisStatTotal">0</strong> 个活动</div>
+  <div class="stat"><span class="emoji">✅</span> 可报名 <strong id="kompisStatOpen">0</strong> 个</div>
+  <div class="stat"><span class="emoji">🈵</span> 已满 <strong id="kompisStatFull">0</strong> 个</div>
+</div>
+
+<div class="container" id="kompisEventsContainer" style="position:relative">
+  <div class="empty-state">
+    <div class="icon">🤝</div>
+    <p>👆 点击上方「获取 Kompis 活动」按钮开始</p>
+  </div>
+</div>
+
+<!-- ========== 模块3: Göteborgs Stad Kalendarium ========== -->
+<div class="header" style="margin-top:2rem;background:linear-gradient(135deg,#2d5016,#4a7c29)">
+  <h1>🏛️ 哥德堡市政府活动日历</h1>
+  <div class="subtitle">来自 goteborg.se 的官方活动日历 · 选择日期查看当天活动</div>
+</div>
+
+<div class="controls" style="flex-wrap:wrap;gap:0.6rem">
+  <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.9rem;color:#475569">
+    日期 <input type="date" id="gbgDate" value="2026-05-28" style="padding:0.4rem 0.6rem;border:1px solid #cbd5e1;border-radius:6px;font-size:0.9rem">
+  </label>
+  <button class="btn btn-primary" id="fetchGbgBtn" onclick="fetchGbgEvents()" style="background:#3b6e1e">
+    🔄 获取市政府活动
+  </button>
+</div>
+
+<div class="progress-container" id="gbgProgressContainer">
+  <div class="progress-bar"><div class="progress-fill" id="gbgProgressFill"></div></div>
+  <div class="progress-text" id="gbgProgressText">准备中...</div>
+  <div class="progress-detail" id="gbgProgressDetail"></div>
+</div>
+
+<div class="stats-bar" id="gbgStatsBar">
+  <div class="stat"><span class="emoji">📊</span> 共 <strong id="gbgStatTotal">0</strong> 个活动</div>
+</div>
+
+<div class="container" id="gbgEventsContainer" style="position:relative">
+  <div class="empty-state">
+    <div class="icon">🏛️</div>
+    <p>👆 选择日期后点击「获取市政府活动」按钮</p>
+  </div>
+</div>
+
+<script>
+// ========== EVENT DATA ==========
+// Pre-loaded data from api.goteborg.com/v1/events for 2026-05-28 to 2026-06-03
+const EVENT_DATA = [
+  {title:"Spring Delight with Gershwin",cn:"格什温春日音乐会",date:"2026-05-28",time:"19:00-21:00",place:"Gothenburg Concert Hall",free:false,summary:"哥德堡交响乐团演绎格什温经典作品",slug:"spring-delight-with-gershwin"},
+  {title:"Gentlemen & Gangsters",cn:"绅士与黑帮爵士夜",date:"2026-05-28",time:"20:00",place:"2Lång Kvartersscen",free:false,summary:"1920年代地下酒吧风爵士即兴演出",slug:"gentlemen-gangsters"},
+  {title:"Seinabo Sey",cn:"塞纳博·塞伊演唱会",date:"2026-05-28",time:"20:00",place:"Liseberg 游乐园主舞台",free:false,summary:"瑞典灵魂/流行/电子跨界实力女声",slug:"seinabo-sey"},
+  {title:"Stinsen Sightseeing – guided tour",cn:"老城观光火车",date:"2026-05-28",time:"全天",place:"Gustaf Adolfs Torg",free:false,summary:"乘观光火车穿越哥德堡老城历史街区",slug:"stinsen-sightseeing",multi:true},
+  {title:"Skulptur i Pilane",cn:"皮拉内雕塑公园",date:"2026-05-28",time:"9:00-19:00",place:"Pilane sculpture park, Klövedal",free:false,summary:"自然景观与当代雕塑艺术融为一体的户外展",slug:"skulptur-i-pilane",multi:true},
+  {title:"After sail festival",cn:"帆船节后派对",date:"2026-05-28",time:"10:00-20:00",place:"Götheborg of Sweden 哥德堡号帆船",free:true,summary:"全家共享的水岸音乐美食节",slug:"after-sail-festival",multi:true},
+  {title:"Experience Götheborg of Sweden",cn:"登船参观哥德堡号",date:"2026-05-28",time:"10:00-16:00",place:"Götheborg of Sweden 哥德堡号帆船",free:false,summary:"参观世界最大远洋木制帆船",slug:"experience-gotheborg-of-sweden",multi:true},
+  {title:"Guided bicycle tour",cn:"自行车城市导览",date:"2026-05-28",time:"10:00",place:"Verkstadsgatan 2",free:false,summary:"骑车探索哥德堡历史趣闻与隐藏角落",slug:"guided-bicycle-tour",multi:true},
+  {title:"Paradox Museum Gothenburg",cn:"悖论博物馆",date:"2026-05-28",time:"10:00-20:00",place:"Postgatan 26-32",free:false,summary:"充满视觉错觉与思维挑战的互动体验馆",slug:"challenge-your-mind-at-paradox-museum-gothenburg",multi:true},
+  {title:"Volvo Scale Models – Through the Years",cn:"沃尔沃模型车历史展",date:"2026-05-28",time:"10:00-19:00",place:"World of Volvo",free:true,summary:"首次集结沃尔沃98年经典车模展览",slug:"volvo-scale-models-through-the-years",multi:true},
+  {title:"Exhibition Landshövdingehus 150 years",cn:"哥德堡经典建筑150年展",date:"2026-05-28",time:"10:00-18:00",place:"哥德堡市博物馆",free:false,summary:"哥德堡标志性木石混合建筑150周年回顾",slug:"exhibition-landshovdingehus-150-years",multi:true},
+  {title:"Sharks, Camera, Action!",cn:"鲨鱼摄影展",date:"2026-05-28",time:"10:00-18:00",place:"海事博物馆与水族馆",free:false,summary:"跟随自然摄影师镜头探索鲨鱼水下世界",slug:"sharks-camera-action",multi:true},
+  {title:"Guided City Tour",cn:"城市水上导览",date:"2026-05-28",time:"10:30-12:30",place:"Lilla Bommens Hamn",free:false,summary:"从水上视角领略哥德堡城市风光",slug:"guided-city-tour",multi:true},
+  {title:"Bowie by Sukita",cn:"鲍伊·锄田正義摄影展",date:"2026-05-28",time:"11:00",place:"Götaplatsen 7",free:false,summary:"日本摄影大师锄田正義镜头下的David Bowie",slug:"bowie-by-sukita",multi:true},
+  {title:"Asplund and the Courthouse",cn:"阿斯普朗德建筑展",date:"2026-05-28",time:"11:00-20:00",place:"Röhsska 博物馆",free:false,summary:"北欧建筑大师Gunnar Asplund代表作品展",slug:"asplund-och-radhuset-at-the-rohsska-museum",multi:true},
+  {title:"Ocean bus Gothenburg",cn:"水陆两栖巴士",date:"2026-05-28",time:"11:00-11:50",place:"Kungsparken 1",free:false,summary:"乘鲨鱼巴士水陆两栖观光城市与运河",slug:"ocean-bus-gothenburg",multi:true},
+  {title:"Asger Jorn & Per Kirkeby",cn:"北欧水彩双大师展",date:"2026-05-28",time:"11:00-17:00",place:"北欧水彩博物馆 Skärhamn",free:false,summary:"两位北欧表现主义艺术大师的联展",slug:"asger-jorn-and-per-kirkeby-at-the-nordic-watercolor-museum",multi:true},
+  {title:"Women Behind the Camera 1848-1968",cn:"女性摄影师120年",date:"2026-05-28",time:"11:00-17:00",place:"Hasselblad 中心",free:false,summary:"1848-1968年间女性摄影先驱回顾展",slug:"women-behind-the-camera-1848-1968",multi:true},
+  {title:"We Will Survive",cn:"末日生存设计展",date:"2026-05-28",time:"11:00-20:00",place:"Röhsska 博物馆",free:false,summary:"探讨预pper运动与生存设计的创意展览",slug:"we-will-survive-the-prepper-movement-and-design",multi:true},
+  {title:"Realm of Shadows",cn:"间谍世界展",date:"2026-05-28",time:"11:00-17:00",place:"Maritiman 海事博物馆",free:false,summary:"走进真实间谍世界的隐秘角落与装备",slug:"realm-of-shadows",multi:true},
+  {title:"Native American Fashion",cn:"美洲原住民时尚展",date:"2026-05-28",time:"11:00-17:00",place:"世界文化博物馆",free:false,summary:"展示原住民风格与当代时尚的对话",slug:"native-american-fashion",multi:true},
+  {title:"Paddan City Canal Tour with Guide",cn:"帕丹运河游船",date:"2026-05-28",time:"11:00-17:00",place:"Kungsportsplatsen",free:false,summary:"经典低桥运河游船穿行城市水道",slug:"paddan-city-canal-tour-with-guide",multi:true},
+  {title:"Hanna Vihriälä",cn:"芬兰艺术家个展",date:"2026-05-28",time:"11:00-18:00",place:"哥德堡美术馆",free:false,summary:"芬兰当代艺术家Hanna Vihriälä首个个展",slug:"hanna-vihriala",multi:true},
+  {title:"Body. Ideal, Gaze, Freedom",cn:"身体·理想·凝视·自由",date:"2026-05-28",time:"11:00-18:00",place:"哥德堡美术馆",free:false,summary:"大型主题展览探索身体表现与凝视",slug:"body-ideal-gaze-freedom",multi:true},
+  {title:"Djuren i staden – Animals in the city",cn:"城市里的动物",date:"2026-05-28",time:"11:00-20:00",place:"自然历史博物馆",free:false,summary:"源自童书绘本的城市野生动物互动展",slug:"djuren-i-staden-animals-in-the-city",multi:true},
+  {title:"Archipelago Tour with Guide",cn:"群岛导览游船",date:"2026-05-28",time:"11:30-14:00",place:"Lilla Bommens Hamn",free:false,summary:"带专业讲解的哥德堡群岛观光游船",slug:"archipelago-tour-with-guide",multi:true},
+  {title:"Archipelago Tour with Lunch",cn:"群岛午餐游船",date:"2026-05-28",time:"11:30-14:00",place:"Lilla Bommens Hamn",free:false,summary:"含午餐的群岛导览观光游船",slug:"archipelago-tour-with-lunch",multi:true},
+  {title:"Beer tasting & brewery tour",cn:"精酿啤酒品鉴之旅",date:"2026-05-28",time:"17:30",place:"Poppels 酿酒厂 Jonsered",free:false,summary:"参观本地精酿啤酒厂并品鉴多款啤酒",slug:"beer-tasting-and-brewery-tour",multi:true},
+  {title:"Boat Excursion around Hisingen Island",cn:"环希辛延岛游船",date:"2026-05-28",time:"18:00-22:15",place:"Lilla Bommens Hamn",free:false,summary:"环绕瑞典第五大岛希辛延的晚间巡航",slug:"boat-excursion-around-hisingen-island",multi:true},
+  {title:"Seafood Cruise in Gothenburg",cn:"海鲜晚餐游船",date:"2026-05-28",time:"18:00-22:15",place:"Lilla Bommens Hamn",free:false,summary:"4小时环岛海鲜自助晚餐游船",slug:"seafood-cruise-in-gothenburg",multi:true},
+  {title:"Dinner Cruise around Hisingen Island",cn:"希辛延点菜晚餐游船",date:"2026-05-28",time:"18:00-22:15",place:"Lilla Bommens Hamn",free:false,summary:"窗外城市夜景配精致单点晚餐巡游",slug:"dinner-cruise-around-hisingen-island",multi:true},
+  {title:"Archipelago Cruise with a Troubadour",cn:"群岛民谣游船",date:"2026-05-28",time:"18:00-21:00",place:"Lilla Bommens Hamn",free:false,summary:"自助晚餐+现场民谣歌手演出游船",slug:"archipelago-cruise-with-a-troubadour",multi:true},
+  {title:"Seafood Cruise with entertainment",cn:"海鲜娱乐游船",date:"2026-05-28",time:"18:30-23:00",place:"Packhusgatan 1",free:false,summary:"晚间群岛巡游+海鲜晚宴+娱乐演出",slug:"seafood-cruise-with-entertianment",multi:true},
+  {title:"Shrimp and Salmon Archipelago Cruise",cn:"虾和三文鱼自助游船",date:"2026-05-28",time:"18:45-21:45",place:"Lilla Bommens Hamn",free:false,summary:"3小时群岛虾与三文鱼无限量自助游船",slug:"shrimp-and-salmon-archipelago-cruise",multi:true},
+  {title:"Mörk – an anthology of horror",cn:"暗黑恐怖剧场",date:"2026-05-28",time:"20:00-21:20",place:"Fängelset 监狱剧场",free:false,summary:"极简灯光下的沉浸式英语恐怖短剧集",slug:"mork-an-anthology-of-horror",multi:true},
+  {title:"Gothenburg's Floating Boat Show",cn:"哥德堡水上船展",date:"2026-05-29",time:"",place:"Eriksberg 渡口",free:true,summary:"海洋与船只爱好者的水上船展盛会",slug:"gothenburgs-floating-boat-show",multi:true},
+  {title:"Gothenburg Docks",cn:"哥德堡码头音乐节",date:"2026-05-29",time:"",place:"Lindholmen & Eriksberg 水岸",free:false,summary:"水岸音乐演出+美食+文化体验",slug:"gothenburg-docks",multi:true},
+  {title:"Hop On–Hop Off bus in Gothenburg",cn:"随上随下观光巴士",date:"2026-05-29",time:"10:30-14:15",place:"全城各站点",free:false,summary:"双层巴士随上随下城市观光",slug:"hop-on-hop-off-bus-in-gothenburg",multi:true},
+  {title:"Livlig Market",cn:"活力设计市集",date:"2026-05-29",time:"12:00-17:00",place:"Kronhuset",free:true,summary:"三天设计/手工艺/音乐/文化创意市集",slug:"livlig-market",multi:true},
+  {title:"Mocky (US)",cn:"Mocky 现场演出",date:"2026-05-29",time:"18:00",place:"Nefertiti 爵士俱乐部",free:false,summary:"加拿大独立唱作人Mocky独家爵士现场",slug:"mocky-us"},
+  {title:"Rockin' all over the World",cn:"环游世界摇滚秀",date:"2026-05-29",time:"18:30-22:45",place:"Park Lane",free:false,summary:"美食+音乐+舞台表演的盛大派对之夜",slug:"rockin-all-over-the-world-bring-your-party-passport",multi:true},
+  {title:"ÖIS – Football in Allsvenskan 2026",cn:"厄斯特什瑞典超足球赛",date:"2026-05-29",time:"19:00",place:"Gamla Ullevi 体育场",free:false,summary:"ÖIS重返瑞典超级联赛主场比赛",slug:"ois-football-in-allsvenskan-2026"},
+  {title:"Hammarkulle carnival 2026",cn:"哈马库勒狂欢节",date:"2026-05-29",time:"19:00-21:00",place:"Hammarkulletorget",free:true,summary:"瑞典最大狂欢节，全年龄段欢乐游行",slug:"hammarkulle-carnival-2026",multi:true},
+  {title:"Gothenburg Classic Car Weekend",cn:"哥德堡经典车周末",date:"2026-05-30",time:"",place:"Anders Carlssons Gata 2",free:false,summary:"第二届哥德堡经典老爷车展览盛会",slug:"gothenburg-classic-car-weekend",multi:true},
+  {title:"Retrospelsmässan 2026",cn:"复古游戏展",date:"2026-05-30",time:"10:00-17:00",place:"St Jörgen Park",free:false,summary:"电子游戏+现场音乐+超大型试玩区",slug:"retrospelsmassan"},
+  {title:"Hisingen Runt och Västkusten Runt 2026",cn:"环希辛延自行车赛",date:"2026-05-30",time:"10:00",place:"Clarion Karlatornet",free:false,summary:"希辛延岛及西海岸自行车骑行活动",slug:"hisingen-runt-och-vastkusten-runt-2026"},
+  {title:"BoBra Mässan",cn:"家居生活博览会",date:"2026-05-30",time:"10:00-17:00",place:"Eriksbergshallen",free:true,summary:"家居装饰灵感与本地设计品牌博览会",slug:"bobra-massan",multi:true},
+  {title:"Boat tour to Vinga island",cn:"文加岛游船之旅",date:"2026-05-30",time:"10:00",place:"Kastor 码头 Hönö",free:false,summary:"登瑞典最西端文加岛自由探索2.5小时",slug:"boat-tour-to-vinga-island",multi:true},
+  {title:"Flea Market in Slottsskogen City Park",cn:"城堡森林跳蚤市场",date:"2026-05-30",time:"11:00-15:00",place:"Slottsskogen 公园",free:true,summary:"哥德堡最受欢迎大型户外跳蚤市场",slug:"flea-market-at-slottsskogen-city-park",multi:true},
+  {title:"Slakthuset Saturdays – Urban Farmers' Market",cn:"屠宰场都市农夫市集",date:"2026-05-30",time:"11:00-16:00",place:"Lilla Waterloogatan 2",free:true,summary:"工业风都市农夫市集售卖新鲜当地食材",slug:"slakthuset-saturdays",multi:true},
+  {title:"Haga Bluegrass street festival",cn:"哈加蓝草街头音乐节",date:"2026-05-30",time:"12:00-17:00",place:"Haga Nygata",free:true,summary:"整条哈加老街变身美国蓝草音乐舞台",slug:"haga-bluegrass-street-festival"},
+  {title:"Megahaveri",cn:"葡萄酒大灾难派对",date:"2026-05-30",time:"12:00-17:00",place:"Wine Mechanics",free:false,summary:"十次灾难后的户外葡萄酒派对",slug:"megahaveri"},
+  {title:"Brunch Cruise in Gothenburg's Archipelago",cn:"群岛早午餐游船",date:"2026-05-30",time:"12:00-15:00",place:"Packhusgatan 1",free:false,summary:"在群岛游船上享用精致早午餐",slug:"brunch-cruise-in-gothenburgs-archipelago",multi:true},
+  {title:"Brunch cruise in the Southern Archipelago",cn:"南群岛早午餐游船",date:"2026-05-30",time:"12:00-15:00",place:"Lilla Bommens Hamn",free:false,summary:"3小时南群岛早午餐巡航之旅",slug:"brunch-cruise-in-the-southern-archipelago",multi:true},
+  {title:"Classical Gems",cn:"古典瑰宝音乐会",date:"2026-05-30",time:"14:00-14:45",place:"World of Volvo",free:true,summary:"莫扎特等古典名作精选免费演出",slug:"classical-gems"},
+  {title:"Guided brewery tours of Poppels Citybryggeri",cn:"城市精酿啤酒厂参观",date:"2026-05-30",time:"14:00-15:20",place:"Poppels Citybryggeri",free:false,summary:"近距离了解精酿啤酒酿造全过程",slug:"guided-brewery-tours-of-poppels-citybryggeri",multi:true},
+  {title:"GAIS – Football in Allsvenskan 2026",cn:"盖斯瑞典超足球赛",date:"2026-05-30",time:"15:00",place:"Gamla Ullevi 体育场",free:false,summary:"GAIS瑞典超级联赛主场比赛",slug:"gais-allsvenskan"},
+  {title:"Way Out West x HHGS Festival",cn:"学生会百年庆音乐节",date:"2026-05-30",time:"16:00",place:"Bananpiren",free:false,summary:"HHGS学生会百年庆典户外音乐节",slug:"way-out-west-x-hhgs-festival"},
+  {title:"Daniel Lemma & Hot This Year Band",cn:"雷鬼之夜",date:"2026-05-30",time:"18:00",place:"Nefertiti 爵士俱乐部",free:false,summary:"力量感雷鬼、节奏与反抗精神之夜",slug:"daniel-lemma-hot-this-year-band"},
+  {title:"Shrimp Cruise in the Archipelago",cn:"群岛大虾吃到饱游船",date:"2026-05-30",time:"18:00-21:00",place:"Lilla Bommens Hamn",free:false,summary:"无限量吃虾享群岛美景3小时巡游",slug:"shrimp-cruise-in-the-archipelago",multi:true},
+  {title:"Maria Naidu – On and on and on on and on",cn:"当代舞蹈演出",date:"2026-05-30",time:"19:00-20:00",place:"Atalante 剧场",free:false,summary:"经典排舞Electric Slide化为当代舞蹈",slug:"maria-naidu-on-and-on-and-on-on-and-on",multi:true},
+  {title:"Kaliffa",cn:"卡利法演唱会",date:"2026-05-30",time:"20:00",place:"Liseberg 游乐园主舞台",free:false,summary:"瑞典雷鬼/舞厅风格彩色活力现场",slug:"kaliffa"},
+  {title:"Majornas megaloppis 2026",cn:"马约纳超级跳蚤市场",date:"2026-05-31",time:"10:00-16:00",place:"Stigbergstorget",free:true,summary:"瑞典最大跳蚤市场之一，淘宝天堂",slug:"majornas-megaloppis-2026"},
+  {title:"Seal spotting on board M/S Kastor",cn:"海豹观赏之旅",date:"2026-05-31",time:"11:30",place:"Kastor 码头 Hönö",free:false,summary:"群岛短途出海近距离观赏野生海豹",slug:"seal-spotting-on-board-m-s-kastor",multi:true},
+  {title:"Guided Crab Fishing Tour",cn:"亲子螃蟹捕捞",date:"2026-05-31",time:"13:00",place:"Kastor 码头 Hönö",free:false,summary:"全家一起收蟹笼学捕蟹技巧",slug:"guided-crab-fishing-tour",multi:true},
+  {title:"BK Häcken – Football in Allsvenskan 2026",cn:"赫根瑞典超足球赛",date:"2026-05-31",time:"14:00",place:"Nordic Wellness Arena",free:false,summary:"BK Häcken瑞典超级联赛主场比赛",slug:"bk-hacken-allsvenskan"},
+  {title:"Scarlet and Dolly Style",cn:"双人演唱会",date:"2026-05-31",time:"16:00",place:"Liseberg 游乐园主舞台",free:false,summary:"Scarlet与Dolly Style联袂登台演出",slug:"scarlet-and-dolly-style"},
+  {title:"Music for a summer evening",cn:"夏日傍晚音乐会",date:"2026-05-31",time:"18:00-20:00",place:"Gothenburg Concert Hall",free:false,summary:"竖琴+长笛+弦乐+声乐组合浪漫演出",slug:"music-for-a-summer-evening"},
+  {title:"Early summer concert at Masthuggskyrkan",cn:"初夏教堂音乐会",date:"2026-05-31",time:"18:00-19:00",place:"Masthuggskyrkan 教堂",free:true,summary:"教堂传统初夏合唱与器乐免费音乐会",slug:"early-summer-concert-at-masthuggskyrkan"},
+  {title:"The Herbarium's Hidden Treasures",cn:"植物标本馆的秘密",date:"2026-06-01",time:"12:00",place:"哥德堡植物园",free:true,summary:"探索植物标本馆珍藏的珍贵植物之旅",slug:"the-herbariums-hidden-treasures",multi:true},
+  {title:"GJO: Jazz@Park Lane – Miles ahead season finale",cn:"哥德堡爵士乐团委终演出",date:"2026-06-01",time:"18:30",place:"Park Lane",free:false,summary:"Miles Davis百年纪念季终爵士大秀",slug:"gjo-jazzpark-lane-miles-ahead-season-finale"},
+  {title:"Wild plant walk",cn:"野生植物识别徒步",date:"2026-06-02",time:"17:30-19:30",place:"Slottsskogen 公园",free:false,summary:"学习辨识和利用大自然野生植物资源",slug:"wild-plant-walk",multi:true},
+  {title:"With water above – hidden inhabitants of the Swedish West Coast",cn:"瑞典西海岸水下生物展",date:"2026-06-03",time:"11:00-17:00",place:"自然历史博物馆",free:false,summary:"认识瑞典西海岸水面下的隐秘居民",slug:"with-water-above-the-hidden-inhabitants-of-the-swedish-west-coast",multi:true},
+  {title:"Trees in time and motion – Dance performance",cn:"树之时间与运动舞蹈",date:"2026-06-03",time:"17:45-19:00",place:"哥德堡植物园",free:false,summary:"植物园自然环境中的沉浸式舞蹈演出",slug:"trees-in-time-and-motion-dance-performance",multi:true},
+  {title:"Classical AW: French Summer",cn:"法式夏日古典音乐会",date:"2026-06-03",time:"18:00-19:00",place:"Gothenburg Concert Hall",free:false,summary:"法国指挥Ludovic Morlot客座演绎法国作品",slug:"classical-aw-french-summer"},
+  {title:"Empire of the Sun",cn:"太阳帝国演唱会",date:"2026-06-03",time:"20:00",place:"Liseberg 游乐园主舞台",free:false,summary:"澳大利亚梦幻视觉系电子乐团现场",slug:"empire-of-the-sun"}
+];
+
+// ========== STATE ==========
+let allEvents = [];
+let showFreeOnly = false;
+let isFetching = false;
+
+// ========== DATE FORMAT ==========
+const monthNames = ['1','2','3','4','5','6','7','8','9','10','11','12'];
+function formatDate(dateStr) {
+  const [y, m, d] = dateStr.split('-');
+  return `${parseInt(m)}月${parseInt(d)}日`;
+}
+const weekdayMap = {0:'周日',1:'周一',2:'周二',3:'周三',4:'周四',5:'周五',6:'周六'};
+function getWeekday(dateStr) {
+  const d = new Date(dateStr);
+  return weekdayMap[d.getDay()];
+}
+
+async function fetchEvents() {
+  if (isFetching) return;
+  isFetching = true;
+  
+  const btn = document.getElementById('fetchBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 获取中...';
+  
+  const startDate = document.getElementById('m1StartDate').value || '2026-05-28';
+  const endDate = document.getElementById('m1EndDate').value || '2026-06-03';
+  const progressContainer = document.getElementById('progressContainer');
+  const progressFill = document.getElementById('progressFill');
+  const progressText = document.getElementById('progressText');
+  const progressDetail = document.getElementById('progressDetail');
+  
+  progressContainer.classList.add('show');
+  progressFill.style.width = '0%';
+  
+  allEvents = [];
+  
+  try {
+    // Try live API
+    progressText.textContent = '正在连接 goteborg.com API...';
+    const infoResp = await fetch(
+      `https://api.goteborg.com/v1/events?lang=en&per_page=12&page=1&order_by=eventdate`
+    );
+    if (!infoResp.ok) throw new Error('API unavailable');
+    
+    const infoData = await infoResp.json();
+    const totalPages = infoData.paging?.pages || 29;
+    const targetStart = new Date(startDate);
+    const targetEnd = new Date(endDate);
+    
+    progressText.textContent = `共 ${totalPages} 页，正在获取...`;
+    
+    for (let page = 1; page <= totalPages; page++) {
+      const resp = await fetch(
+        `https://api.goteborg.com/v1/events?lang=en&per_page=12&page=${page}&order_by=eventdate`
+      );
+      if (!resp.ok) break;
+      const data = await resp.json();
+      const events = data.events || [];
+      
+      for (const e of events) {
+        const info = e.information || {};
+        const dates = info.dates || [];
+        let bestDate = null, bestTime = '';
+        
+        for (const d of dates) {
+          const s = (d.start || '').slice(0, 10);
+          const ed = (d.end || d.start || '').slice(0, 10);
+          if (s && s >= startDate && s <= endDate) {
+            bestDate = s;
+            const st = d.start?.slice(11, 16) || '';
+            const et = d.end?.slice(11, 16) || '';
+            if (st && et && et !== '00:00') bestTime = st + '-' + et;
+            else if (st && st !== '00:00') bestTime = st;
+            break;
+          }
+        }
+        if (!bestDate) continue;
+        
+        const title = (e.title?.rendered || '').replace(/&#8211;/g,'–').replace(/&amp;/g,'&');
+        const slug = e.slug || '';
+        const pricing = (info.pricing || {});
+        const isFree = pricing.free === true;
+        const place = (info.place || {}).title || '';
+        const loc = (info.contact || {}).location || {};
+        const address = loc.address || '';
+        const tickets = (info.contact || {}).tickets || '';
+        const hasMulti = dates.length > 1;
+        
+        const cnInfo = getCnForEvent(title, place || address, m1CnLookup, slug);
+        allEvents.push({
+          title, slug, date: bestDate, time: bestTime,
+          place: place || address, free: isFree, multi: hasMulti,
+          cn: cnInfo.cn || '', summary: cnInfo.summary || '', tickets
+        });
+      }
+      
+      const pct = Math.round((page / totalPages) * 100);
+      progressFill.style.width = `${pct}%`;
+      progressText.textContent = `已获取第 ${page}/${totalPages} 页`;
+      progressDetail.textContent = `已找到 ${allEvents.length} 个活动`;
+      await sleep(50);
+    }
+  } catch (e) {
+    // Fallback to embedded data
+    console.log('API unavailable:', e.message);
+    progressText.textContent = 'API 不可用，使用本地缓存数据...';
+    
+    const filtered = EVENT_DATA.filter(ev => ev.date >= startDate && ev.date <= endDate);
+    const total = filtered.length;
+    const chunkSize = 8;
+    for (let i = 0; i < total; i += chunkSize) {
+      const chunk = filtered.slice(i, i + chunkSize);
+      allEvents.push(...chunk);
+      const pct = total > 0 ? Math.round(((i + chunk.length) / total) * 100) : 100;
+      progressFill.style.width = `${pct}%`;
+      progressText.textContent = `已加载 ${i + chunk.length}/${total} 个（缓存）`;
+      await sleep(100);
+    }
+  }
+  
+  // Done
+  progressFill.style.width = '100%';
+  progressText.textContent = `✅ 完成！共 ${allEvents.length} 个活动`;
+  progressDetail.textContent = '';
+  
+  btn.disabled = false;
+  btn.innerHTML = '🔄 重新获取';
+  isFetching = false;
+  
+  await enrichEvents(allEvents, m1CnLookup, e => e.slug).catch(() => {});
+  markModuleLoaded('eventsContainer');
+  updateStats();
+  delete renderPages['eventsContainer'];
+  renderEvents();
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ========== RENDER ==========
+function renderEvents() {
+  const container = document.getElementById('eventsContainer');
+  const statsBar = document.getElementById('statsBar');
+  
+  let filtered = showFreeOnly ? allEvents.filter(e => e.free) : allEvents;
+  
+  if (filtered.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="icon">🔍</div><p>没有匹配的活动</p></div>';
+    statsBar.classList.add('show');
+    return;
+  }
+  
+  statsBar.classList.add('show');
+  
+  const shown = renderPages['eventsContainer'] || 0;
+  const batch = filtered.slice(0, shown + PAGE_SIZE);
+  renderPages['eventsContainer'] = batch.length;
+  
+  renderEventBatch(container, batch, filtered.length > batch.length);
+}
+
+function renderEventBatch(container, events, hasMore) {
+  const groups = {};
+  for (const e of events) {
+    if (!groups[e.date]) groups[e.date] = [];
+    groups[e.date].push(e);
+  }
+  
+  const sortedDates = Object.keys(groups).sort();
+  let html = '';
+  for (const dateStr of sortedDates) {
+    const dayEvents = groups[dateStr];
+    html += `
+    <div class="date-group">
+      <div class="date-label">
+        📅 ${formatDate(dateStr)} ${getWeekday(dateStr)}
+        <span class="count">${dayEvents.length}</span>
+      </div>`;
+    
+    for (const e of dayEvents) {
+      const borderClass = e.free ? 'free' : 'paid';
+      const badgeClass = e.free ? 'badge-free' : 'badge-paid';
+      const badgeText = e.free ? '免费' : '收费';
+      const multiBadge = e.multi ? '<span class="badge badge-multi">多日</span>' : '';
+      const timeDisplay = e.time ? e.time : '全天';
+      const linkUrl = `https://www.goteborg.com/en/events/${e.slug}`;
+      const cnDisplay = e.cn ? ` <span class="cn">/ ${e.cn}</span>` : '';
+      
+      html += `
+      <div class="event-card ${borderClass}">
+        <div class="event-title">
+          <a href="${linkUrl}" target="_blank" rel="noopener">${e.title}${cnDisplay}</a>
+        </div>
+        <div class="event-meta">
+          <span>⏰ ${timeDisplay}</span>
+          <span>📍 ${e.place || '—'}</span>
+          <span class="badge ${badgeClass}">${badgeText}</span>
+          ${multiBadge}
+        </div>
+        ${e.summary ? `<div class="event-summary">📝 ${e.summary}</div>` : ''}
+      </div>`;
+    }
+    html += '</div>';
+  }
+  
+  if (hasMore) {
+    html += `<button class="load-more-btn" onclick="loadMoreEvents()">📥 继续浏览更多活动 (${events.length} 已显示)...</button>`;
+  }
+  
+  container.innerHTML = html;
+}
+
+function loadMoreEvents() { renderEvents(); }
+
+function updateStats() {
+  const filtered = showFreeOnly ? allEvents.filter(e => e.free) : allEvents;
+  const freeCount = allEvents.filter(e => e.free).length;
+  const paidCount = allEvents.filter(e => !e.free).length;
+  
+  document.getElementById('statTotal').textContent = filtered.length;
+  document.getElementById('statFree').textContent = freeCount;
+  document.getElementById('statPaid').textContent = paidCount;
+}
+
+// ========== FILTER ==========
+function toggleFreeFilter() {
+  showFreeOnly = !showFreeOnly;
+  const btn = document.getElementById('filterFreeBtn');
+  if (showFreeOnly) {
+    btn.classList.add('active');
+    btn.textContent = '🆓 显示全部活动';
+  } else {
+    btn.classList.remove('active');
+    btn.textContent = '🆓 只看免费活动';
+  }
+  delete renderPages['eventsContainer'];
+  updateStats();
+  renderEvents();
+}
+
+// ========== INIT & UTILS ==========
+const moduleCollapsed = {};
+
+function toggleOneModule(containerId, btnId, name) {
+  const el = document.getElementById(containerId);
+  const btn = document.getElementById(btnId);
+  if (!el || !btn) return;
+  moduleCollapsed[containerId] = !moduleCollapsed[containerId];
+  el.style.display = moduleCollapsed[containerId] ? 'none' : '';
+  btn.textContent = moduleCollapsed[containerId] ? '📋 展开' + name : '📋 收起' + name;
+}
+
+function markModuleLoaded(containerId) {
+  // Keep for pagination reset
+}
+
+// ========== PAGE_SIZE ==========
+const PAGE_SIZE = 200;
+
+// Pagination: 200 per batch
+const renderPages = {}; // {containerId: {allEvents, shown}}
+const loadMoreCallbacks = {}; // {containerId: () => {}}
+
+function renderWithPagination(containerId, allEvents, renderBatchFn) {
+  const shown = renderPages[containerId] || 0;
+  const batch = allEvents.slice(0, shown + PAGE_SIZE);
+  renderPages[containerId] = batch.length;
+  loadMoreCallbacks[containerId] = () => renderWithPagination(containerId, allEvents, renderBatchFn);
+  renderBatchFn(batch, allEvents.length > batch.length);
+}
+
+function addLoadMoreButton(containerId, html, hasMore) {
+  if (hasMore) {
+    html += `<button class="load-more-btn" onclick="loadMore('${containerId}')">📥 继续浏览更多活动...</button>`;
+  }
+  return html;
+}
+
+function loadMore(containerId) {
+  if (loadMoreCallbacks[containerId]) loadMoreCallbacks[containerId]();
+}
+// Wait for user to click button
+window.scrollTo(0, 0);
+
+// ========== MODULE 2: KOMPIS SVERIGE ==========
+const KOMPIS_DATA = [
+  {title:"Teater i Göteborg / 哥德堡话剧",date:"2026-05-28",time:"18:40-20:30",place:"3:e Våningen, Sockerbruket 9",full:false,summary:"ibodies剧团演出《BARMHÄRTIGHETEN》，探索恐惧与权力",slug:"teater-i-goteborg-16",link:"https://kompissverige.se/activities/teater-i-goteborg-16/"},
+  {title:"Titta på fotboll i Göteborg / 观看哥德堡足球赛",date:"2026-05-29",time:"18:20-21:00",place:"Gamla Ullevi, Gunnar Grens Plats 1",full:true,summary:"ÖIS主场迎战Elfsborg的瑞典超足球赛",slug:"titta-pa-fotboll-i-goteborg-9",link:"https://kompissverige.se/activities/titta-pa-fotboll-i-goteborg-9/"},
+  {title:"Försommarkonsert i Göteborg / 哥德堡初夏音乐会",date:"2026-06-03",time:"17:15-19:00",place:"Göteborgs Konserthus, Götaplatsen 8",full:true,summary:"哥德堡音乐厅法国主题古典AW音乐会，含交流酒会",slug:"forsommarkonsert-i-goteborg",link:"https://kompissverige.se/activities/forsommarkonsert-i-goteborg/"},
+  {title:"Fira Nationaldagen / 瑞典国庆日庆典",date:"2026-06-06",time:"11:00-15:30",place:"Lilla torget & Slottsskogen",full:true,summary:"省长花园社交+Slottsskogen交响乐团国庆音乐会",slug:"fira-nationaldagen-med-mingel-och-konsert-i-goteborg",link:"https://kompissverige.se/activities/fira-nationaldagen-med-mingel-och-konsert-i-goteborg/"},
+  {title:"Teater i Göteborg / 哥德堡话剧《Nadim》",date:"2026-08-20",time:"18:30-20:10",place:"Göteborgs Stadsteater, Götaplatsen 4",full:false,summary:"城市剧院《Nadim》—从难民到瑞典警察的真实故事",slug:"teater-i-goteborg-17",link:"https://kompissverige.se/activities/teater-i-goteborg-17/"}
+];
+
+let kompisEvents = [];
+let showOpenOnly = false;
+let isFetchingKompis = false;
+const kompisMonthMap = {'jan':'1','feb':'2','mar':'3','apr':'4','maj':'5','jun':'6','jul':'7','aug':'8','sep':'9','okt':'10','nov':'11','dec':'12'};
+
+async function fetchKompisEvents() {
+  if (isFetchingKompis) return;
+  isFetchingKompis = true;
+  
+  const btn = document.getElementById('fetchKompisBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class=\"spinner\"></span> 获取中...';
+  
+  const pc = document.getElementById('kompisProgressContainer');
+  const pf = document.getElementById('kompisProgressFill');
+  const pt = document.getElementById('kompisProgressText');
+  const pd = document.getElementById('kompisProgressDetail');
+  
+  pc.classList.add('show');
+  pf.style.width = '0%';
+  pt.textContent = '正在抓取 kompissverige.se ...';
+  pd.textContent = '';
+  
+  kompisEvents = [];
+  
+  try {
+    const workerUrl = 'https://plain-meadow-437c.dishkun2012.workers.dev/api/kompis';
+    const resp = await fetch(workerUrl);
+    if (!resp.ok) throw new Error('Proxy unavailable');
+    
+    const html = await resp.text();
+    const blocks = html.split('<div class="puff aktivitet "');
+    const eventsToCheck = [];
+    
+    for (const block of blocks.slice(1)) {
+      if (!block.includes('Göteborg</span>')) continue;
+      const titleM = block.match(/<div class="title">(.*?)<\/div>/);
+      const timeM = block.match(/<div class="time">\s*(.*?)\s*<\/div>/);
+      const locM = block.match(/<span class="omrade">Göteborg<\/span>\s*(.*?)\s*<\/div>/);
+      const addrM = block.match(/<div class="location">\s*(.*?)\s*<\/div>/);
+      const descM = block.match(/<div class="description ">\s*(.*?)\s*<\/div>/);
+      const linkM = block.match(/href="(\/activities\/[^"]+)"|href="(https:\/\/kompissverige\.se\/activities\/[^"]+)"/);
+      const dayM = block.match(/<div class="day">(\d+)<\/div>/);
+      const monthM = block.match(/<div class="month">(\w+)<\/div>/);
+      if (!titleM) continue;
+      const title = titleM[1].replace(/&#8211;/g,'\u2013').replace(/&amp;/g,'&').replace(/<[^>]*>/g,'').trim();
+      const time = timeM ? timeM[1].trim() : '';
+      const loc = locM ? locM[1].replace(/<[^>]*>/g,'').trim() : '';
+      const addr = addrM ? addrM[1].replace(/<[^>]*>/g,'').trim() : '';
+      const desc = descM ? descM[1].replace(/<br\s*\/?>/g,' ').replace(/<[^>]*>/g,'').trim() : '';
+      const link = linkM ? (linkM[2] || 'https://kompissverige.se' + linkM[1]) : '';
+      const day = dayM ? dayM[1] : '';
+      const month = monthM ? monthM[1] : '';
+      const slug = link.split('/').filter(Boolean).pop() || '';
+      const monthMap = {jan:'01',feb:'02',mar:'03',apr:'04',maj:'05',jun:'06',jul:'07',aug:'08',sep:'09',okt:'10',nov:'11',dec:'12'};
+      const m = monthMap[(month||'').toLowerCase()] || '01';
+      const cnInfo = getCnForEvent(title, loc||addr, m2CnLookup, slug);
+      const ev = {title,date:`2026-${m}-${day.padStart(2,'0')}`,time,place:loc||addr,full:false,
+        summary: cnInfo.summary || desc.slice(0,80),
+        cn: cnInfo.cn || '', slug, link};
+      kompisEvents.push(ev);
+      eventsToCheck.push(ev);
+    }
+    
+    // Check each event's detail page for booking status via Worker
+    for (const ev of eventsToCheck) {
+      try {
+        const detailResp = await fetch(`${workerUrl.replace('/api/kompis','/api/kompis-detail')}?slug=${ev.slug}`);
+        if (detailResp.ok) {
+          const detailHtml = await detailResp.text();
+          if (/fullbokad/i.test(detailHtml) || /v\u00e4ntelista/i.test(detailHtml)) {
+            ev.full = true;
+          }
+        }
+      } catch(ex) {}
+    }
+    
+    if (kompisEvents.length === 0) throw new Error('No events');
+    pf.style.width = '100%';
+    pt.textContent = `\u2705 完成！共 ${kompisEvents.length} 个 Kompis 活动（实时）`;
+  } catch (e) {
+    console.log('Proxy unavailable:', e.message);
+    pt.textContent = '无法连接，使用本地缓存...';
+    for (let i = 0; i < KOMPIS_DATA.length; i++) {
+      kompisEvents.push(KOMPIS_DATA[i]);
+      pf.style.width = Math.round(((i+1)/KOMPIS_DATA.length)*100) + '%';
+      await sleep(150);
+    }
+    pt.textContent = `✅ 完成！共 ${kompisEvents.length} 个 Kompis 活动（缓存）`;
+  }
+  pd.textContent = '数据来自 kompissverige.se';
+  
+  btn.disabled = false;
+  btn.innerHTML = '🔄 重新获取';
+  isFetchingKompis = false;
+  
+  await enrichEvents(kompisEvents, m2CnLookup, e => e.slug).catch(() => {});
+  updateKompisStats();
+  delete renderPages['kompisEventsContainer'];
+  markModuleLoaded('kompisEventsContainer');
+  renderKompisEvents();
+}
+
+function renderKompisEvents() {
+  const container = document.getElementById('kompisEventsContainer');
+  let filtered = showOpenOnly ? kompisEvents.filter(e => !e.full) : kompisEvents;
+  const shown = renderPages['kompisEventsContainer'] || 0;
+  const batch = filtered.slice(0, shown + PAGE_SIZE);
+  renderPages['kompisEventsContainer'] = batch.length;
+  const statsBar = document.getElementById('kompisStatsBar');
+  
+  
+  if (filtered.length === 0) {
+    container.innerHTML = '<div class=\"empty-state\"><div class=\"icon\">🔍</div><p>没有匹配的活动</p></div>';
+    statsBar.classList.add('show');
+    return;
+  }
+  
+  statsBar.classList.add('show');
+  
+  const groups = {};
+  for (const e of batch) {
+    if (!groups[e.date]) groups[e.date] = [];
+    groups[e.date].push(e);
+  }
+  
+  const sortedDates = Object.keys(groups).sort();
+  
+  let html = '';
+  for (const dateStr of sortedDates) {
+    const dayEvents = groups[dateStr];
+    const d = new Date(dateStr);
+    html += `
+    <div class=\"date-group\">
+      <div class=\"date-label\">
+        📅 ${d.getMonth()+1}月${d.getDate()}日 ${['周日','周一','周二','周三','周四','周五','周六'][d.getDay()]}
+        <span class=\"count\">${dayEvents.length}</span>
+      </div>`;
+    
+    for (const e of dayEvents) {
+      const borderClass = e.full === true ? 'paid' : 'free';
+      const statusBadge = e.full === true ? '<span class="badge badge-paid">🈵 已满</span>' : e.full === false ? '<span class="badge badge-free">✅ 可报名</span>' : '<span class="badge">📋 查看详情</span>';
+            const cnDisplay = e.cn ? ` <span class="cn">/ ${e.cn}</span>` : ``;
+const linkUrl = `https://kompissverige.se/activities/${e.slug}/`;
+      
+      html += `
+      <div class=\"event-card ${borderClass}\">
+        <div class=\"event-title\">
+          <a href=\"${linkUrl}\" target=\"_blank\" rel=\"noopener\">${e.title}${cnDisplay}</a>
+        </div>
+        <div class=\"event-meta\">
+          <span>⏰ ${e.time}</span>
+          <span>📍 ${e.place}</span>
+          ${statusBadge}
+        </div>
+        ${e.summary ? `<div class=\"event-summary\">📝 ${e.summary}</div>` : ''}
+      </div>`;
+    }
+    html += '</div>';
+  }
+  
+  if (filtered.length > batch.length) html += '<button class="load-more-btn" onclick="loadMoreKompis()">📥 继续浏览更多活动 (' + batch.length + ' 已显示)...</button>';
+  container.innerHTML = html;
+  updateKompisStats();
+}
+
+function loadMoreKompis() { renderKompisEvents(); }
+
+function updateKompisStats() {
+  const filtered = showOpenOnly ? kompisEvents.filter(e => !e.full) : kompisEvents;
+  const openCount = kompisEvents.filter(e => !e.full).length;
+  const fullCount = kompisEvents.filter(e => e.full).length;
+  document.getElementById('kompisStatTotal').textContent = filtered.length;
+  document.getElementById('kompisStatOpen').textContent = openCount;
+  document.getElementById('kompisStatFull').textContent = fullCount;
+}
+
+function toggleKompisFilter() {
+  showOpenOnly = !showOpenOnly;
+  const btn = document.getElementById('filterKompisBtn');
+  if (showOpenOnly) {
+    btn.classList.add('active');
+    btn.textContent = '🟢 显示全部活动';
+  } else {
+    btn.classList.remove('active');
+    btn.textContent = '🟢 只看可报名活动';
+  }
+  delete renderPages['kompisEventsContainer'];
+  updateKompisStats();
+  renderKompisEvents();
+}
+
+// ========== MODULE 3: GÖTEBORGS STAD KALENDARIUM ==========
+// Updated 2026-05-28 - exact data from goteborg.se
+// 155 events from goteborg.se for 2026-05-28
+// 605 unique events across 2026-05-28 to 2026-06-03
+// 605 events with clean Chinese names
+const GBG_SAMPLE = [
+  {title:'Kulturcafé i Hammarkullen',cn:'东北区社区中心活动',place:'Mötesplatser Nordost',summary:'在东北区社区中心的文化活动',dates:{"2026-06-01": "11:00–13:00"},aid:'0030f136-2dcb-4dcb-96df-9516c66b6058'},
+  {title:'Välkommen till Språkcafé på Hammarkullen!',cn:'语言咖啡馆（Hammarkullens biblio）',place:'Hammarkullens bibliotek',summary:'在Hammarkullens biblio练习瑞典语会话',dates:{"2026-06-02": "17:00–18:00"},aid:'003d6f3d-9d9a-4a5a-ba40-80e163c2a98b'},
+  {title:'Kom och spela schack med oss',cn:'国际象棋',place:'Lagerhusets Bibliotek',summary:'在Lagerhuset图书馆的桌游或棋类活动',dates:{"2026-06-01": "15:00–18:00"},aid:'015c0ae2-38a9-481e-9704-fc459b9aa215'},
+  {title:'Finissage och Artist talk: HDK Valand',cn:'市立图书馆活动',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆的社区活动',dates:{"2026-05-31": "13:00–14:00"},aid:'0288e0c2-e0da-4d1d-8035-edc763b2aad5'},
+  {title:'Högläsning',cn:'朗读活动',place:'Hjällbo bibliotek',summary:'在Hjällbo bibliotek的儿童故事朗读',dates:{"2026-05-29": "10:00–10:30"},aid:'032ee63f-58be-4100-b388-68a20cd6c7a4'},
+  {title:'Digitalt stöd',cn:'数字支持服务',place:'Mötesplats S:t Gabriel Tynnered',summary:'在Tynnered社区中心的数字技能支持',dates:{"2026-05-28": "12:30–13:30"},aid:'038ce42d-18d5-4864-af90-49dc06c4fd4f'},
+  {title:'Utställning: Djetinjstvo u ratu: crteži iz Srebrenice/Barndom i krig: teckningar från Srebrenica',cn:'展览：Djetinjstvo u ratu: ',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆举办的艺术展览',dates:{"2026-05-28": "08:00–20:00"},aid:'03b1cccd-9dac-4c3f-98dc-9fbf90cf70ba'},
+  {title:'Herrgrupp i samarbete med Lions i Tuve',cn:'Tuve社区中心活动',place:'Mötesplats Tuve',summary:'在Tuve社区中心的社区活动',dates:{"2026-06-02": "10:00–12:00"},aid:'040bf5af-bdef-42e5-992d-839b6ad00f39'},
+  {title:'Öppet hus på Regnbågshuset',cn:'彩虹之家开放日',place:'Regnbågshuset',summary:'在彩虹之家的开放参观日',dates:{"2026-06-03": "15:00–18:00"},aid:'043c0547-7283-46dc-9544-a09b48e9232f'},
+  {title:'Qigong',cn:'气功训练',place:'Mötesplats Verket',summary:'在Verket社区中心的社区活动',dates:{"2026-06-02": "10:30–11:30"},aid:'04ad7311-53bd-4402-bc19-079416ec8870'},
+  {title:'Bygg på Bygglekplatsen',cn:'建筑乐园玩耍',place:'Bygglekplatsen i Biskopsgården',summary:'在Biskopsgården建筑乐园的社区活动',dates:{"2026-06-03": "13:00–17:00"},aid:'05399e5a-b0e1-4b31-b3a4-93c5a05ac9e0'},
+  {title:'Gratis yoga för tjejer och kvinnor',cn:'免费瑜伽',place:'Sjumilahallen',summary:'在Sjumilahallen体育馆的免费瑜伽课程',dates:{"2026-05-28": "17:00–18:00"},aid:'055b4654-c781-408a-851d-766bdb8ddbd7'},
+  {title:'Seniorträff: lär dig mer om bibliotekets digitala tjänster',cn:'长者聚会',place:'Kulturhuset Bergsjön',summary:'在Bergsjön文化中心的长者社交活动',dates:{"2026-05-28": "12:30–14:00"},aid:'0594d611-12a3-4d38-9bf6-241450e3a01a'},
+  {title:'Bokbabbel med bebis - våravslutning',cn:'Backa图书馆活动',place:'Backa bibliotek',summary:'在Backa图书馆的社区活动',dates:{"2026-06-03": "10:00–11:00"},aid:'05b7dcd3-068b-4bf3-8c8a-ee3a544fdba4'},
+  {title:'Persisk bokklubb',cn:'Frölunda图书馆活动',place:'Frölunda bibliotek',summary:'在Frölunda图书馆的社区活动',dates:{"2026-05-30": "10:30–11:30"},aid:'0636709c-e69e-4290-aa58-91757218c09c'},
+  {title:'Högläsning med Nils Andersson',cn:'朗读活动',place:'Angereds bibliotek',summary:'在Angered图书馆的儿童故事朗读',dates:{"2026-05-28": "13:00–14:00"},aid:'067e6680-8eeb-4b56-a986-4903123cf2dd'},
+  {title:'Fredrikas gård 1',cn:'Fredrika农场',place:'Axel fritid',summary:'在Axel休闲中心的社区活动',dates:{"2026-05-28": "14:30–17:30"},aid:'076700bc-e7eb-4cd7-b5c4-b36a5f24a0c8'},
+  {title:'Konstvärkarna',cn:'Verket社区中心活动',place:'Mötesplats Verket',summary:'在Verket社区中心的社区活动',dates:{"2026-06-02": "11:45–15:00"},aid:'07730162-8ba1-4eb8-9bf3-720760a8428a'},
+  {title:'Pluggträffar med Somaliska Akademiker',cn:'学习小组',place:'Lagerhusets Bibliotek',summary:'在Lagerhuset图书馆的社区活动',dates:{"2026-05-28": "16:00–19:00"},aid:'080f7491-ea3d-4867-9e71-0acc573592f7'},
+  {title:'Utställning: Djetinjstvo u ratu: crteži iz Srebrenice/Barndom i krig: teckningar från Srebrenica',cn:'展览：Djetinjstvo u ratu: ',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆举办的艺术展览',dates:{"2026-06-01": "08:00–20:00"},aid:'08ee66c0-c6e3-4d3e-a133-0dd8314fb17b'},
+  {title:'Nia dans',cn:'Nia舞蹈',place:'Mötesplats Guldheden i samarbete med WCJ',summary:'在Guldheden社区中心的舞蹈课程',dates:{"2026-05-28": "13:30–14:30"},aid:'09742afd-e6eb-4afb-9ffc-138aaba1b8cb'},
+  {title:'Level Up! Klubben för dig med nördiga intressen!',cn:'Ungdomens hus 1200 K活动',place:'Ungdomens hus 1200 Kvadrat',summary:'在Ungdomens hus 1200 K的社区活动',dates:{"2026-06-01": "16:00–20:00"},aid:'0992d25f-5fcc-407e-8dc4-aac0f9fecf4c'},
+  {title:'Målargrupp',cn:'绘画小组',place:'Mötesplats Kallebäck',summary:'在Kallebäck社区中心的绘画创作活动',dates:{"2026-05-28": "12:30–14:30"},aid:'0a2a42b3-bde4-43c8-b969-3bb4971a859b'},
+  {title:'Bollywood- dans för kvinnor',cn:'Community center Bru活动',place:'Community center Brunnsbo',summary:'在Community center Bru的舞蹈课程',dates:{"2026-05-31": "16:00–17:00"},aid:'0ad59084-72d6-4f10-8fa5-ae9ee0fc5d41'},
+  {title:'Bokbord: somalisk litteratur',cn:'Kortedala图书馆活动',place:'Kortedala bibliotek',summary:'在Kortedala图书馆的社区活动',dates:{"2026-06-01": "17:00–18:30"},aid:'0b272785-b306-42a7-a569-7aac4b11fb5d'},
+  {title:'Queer bokcirkel för vuxna',cn:'读书会',place:'Kulturhuset Kåken',summary:'在Kåken文化中心的社区活动',dates:{"2026-05-31": "12:00–13:30"},aid:'0b3d5aa1-7ec9-4ee2-85f6-414a155c2247'},
+  {title:'Träning med instruktör - i Vättlefjälls utegym',cn:'教练指导健身',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的健身体验',dates:{"2026-06-02": "11:30–12:30"},aid:'0b55ee2c-0777-4760-8f8f-06635e4c5e72'},
+  {title:'Fredrikas gård 1',cn:'Fredrika农场',place:'Axel fritid',summary:'在Axel休闲中心的社区活动',dates:{"2026-06-02": "14:30–17:30"},aid:'0cbb4ec7-f5e1-4f6a-a965-4b09c658dabd'},
+  {title:'Street Dance Choreo, 9-11 år',cn:'Lights On Nytorpssko活动',place:'Lights On Nytorpsskolan',summary:'在Lights On Nytorpssko的社区活动',dates:{"2026-05-30": "13:30–15:00"},aid:'0d82955d-3f38-41d7-b4dd-3de35b43b2e4'},
+  {title:'Invånarguider informerar om valet 2026',cn:'Gamlestadens Bibliot活动',place:'Gamlestadens Bibliotek',summary:'在Gamlestadens Bibliot的社区活动',dates:{"2026-06-03": "15:00–17:00"},aid:'0d9f03ab-a887-4234-a400-73b08c244973'},
+  {title:'Keramik med kulturskolan -drop in (9-19 år)',cn:'陶艺活动',place:'](/wps/portal/kalendarium/kalendarium-start?activityId=0dc7cb38-5395-4bd2-870a-1e5fc4da681e)Kulturhuset Bergsjön',summary:'在Bergsjön文化中心的陶艺创作体验',dates:{"2026-05-29": "15:45–17:00"},aid:'0dc7cb38-5395-4bd2-870a-1e5fc4da681e'},
+  {title:'Kvinnogym (insläpp 8.45–9)',cn:'东北区健康中心活动',place:'](/wps/portal/kalendarium/kalendarium-start?activityId=0dd3ed8c-48a8-4c13-a66d-e17ffd31d645)Hälsoteket i Nordost',summary:'在东北区健康中心的社区活动',dates:{"2026-06-03": "09:00–10:00"},aid:'0dd3ed8c-48a8-4c13-a66d-e17ffd31d645'},
+  {title:'Pingis',cn:'乒乓球',place:'Mötesplats Kallebäck',summary:'在Kallebäck社区中心的社区活动',dates:{"2026-06-02": "13:00–15:00"},aid:'0e06b306-463a-4622-be99-ad2f216c0d07'},
+  {title:'Engelsk konversation - lätt nivå',cn:'英语会话',place:'Mötesplats Sandarna',summary:'在Sandarna社区中心练习英语会话',dates:{"2026-06-02": "11:00–12:30"},aid:'0eff525b-e8c9-4ec5-96ee-ac137a1b8aa7'},
+  {title:'Läxhjälp',cn:'作业辅导',place:'Gamlestadens Bibliotek',summary:'在Gamlestadens Bibliot的免费课业辅导',dates:{"2026-06-02": "17:00–18:30"},aid:'0f33ae97-c421-4021-b14e-83109378540f'},
+  {title:'Styrka och balans',cn:'力量与平衡训练',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的社区活动',dates:{"2026-06-02": "11:00–11:50"},aid:'0fcab746-3f4c-4320-a3a6-1a2f6040a170'},
+  {title:'Fredagsdansen med lilla Evelinaz på Mötesplats Backa',cn:'Backa社区中心活动',place:'Mötesplats Backa',summary:'在Backa社区中心的舞蹈课程',dates:{"2026-05-29": "11:00–12:00"},aid:'0fd39c2f-396c-4914-8abc-4ec132476e6b'},
+  {title:'Det får aldrig hända igen: Pamti Prijedor (Minns Prijedor)',cn:'市立图书馆活动',place:'](/wps/portal/kalendarium/kalendarium-start?activityId=0ffe049c-880d-4454-82ea-4464575d534f)Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆的社区活动',dates:{"2026-05-31": "12:00–13:30"},aid:'0ffe049c-880d-4454-82ea-4464575d534f'},
+  {title:'Samtalsgrupp för män',cn:'Solängen社区中心活动',place:'Mötesplats Solängsvägen 53 (fd mötesplats Solängen)',summary:'在Solängen社区中心的社区活动',dates:{"2026-05-29": "10:00–12:00"},aid:'103fa7af-d081-4263-9f54-255087cc9b9f'},
+  {title:'Street Dance Choreo, 5-8 år',cn:'Lights On Nytorpssko活动',place:'Lights On Nytorpsskolan',summary:'在Lights On Nytorpssko的社区活动',dates:{"2026-06-02": "16:00–17:00"},aid:'1087355d-0e48-43b4-8bb3-dd991951adb9'},
+  {title:'Träna i gymmet',cn:'健身房锻炼',place:'Växthuset',summary:'在Växthuset温室的社区活动',dates:{"2026-06-01": "09:00–12:00"},aid:'11069d1c-807e-4af6-8560-209468c8d605'},
+  {title:'Nålfiltning',cn:'frölunda社区中心活动',place:'Mötesplats Frölunda',summary:'在frölunda社区中心的社区活动',dates:{"2026-06-02": "10:00–12:00"},aid:'111175c9-7b50-4407-a278-c6e39498cfd0'},
+  {title:'Drop-in på Mötesplats Myntet',cn:'Myntet社区中心活动',place:'Mötesplats Myntet',summary:'在Myntet社区中心的社区活动',dates:{"2026-05-30": "16:00–20:00"},aid:'117fa016-6533-4e8e-a8f7-ed94a77c0c96'},
+  {title:'Bygg på Bygglekplatsen',cn:'建筑乐园玩耍',place:'Bygglekplatsen i Biskopsgården',summary:'在Biskopsgården建筑乐园的社区活动',dates:{"2026-06-01": "13:00–17:00"},aid:'122c7539-979d-43bc-99a5-478a15db5c35'},
+  {title:'Sagostund',cn:'故事时间',place:'Bergsjöns bibliotek',summary:'在Bergsjön图书馆的儿童故事朗读',dates:{"2026-05-29": "10:00–10:30"},aid:'127af2b8-207e-4511-a334-132f9689b93d'},
+  {title:'Ungdomsfullmäktige möter kommunstyrelsen',cn:'市立图书馆活动',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆的社区活动',dates:{"2026-06-03": "16:30–18:30"},aid:'131d340f-fd4a-45f8-8887-e3d99d23d532'},
+  {title:'Skaparhäng för unga',cn:'青年创意聚会',place:'Kulturhuset Kåken',summary:'在Kåken文化中心的社区活动',dates:{"2026-05-28": "16:00–18:30"},aid:'1368620a-6638-4408-8a90-9015bf35520f'},
+  {title:'Demokratiworkshop på Arabiska',cn:'Medborgarkontoret Be活动',place:'Medborgarkontoret Bergsjön',summary:'在Medborgarkontoret Be的社区活动',dates:{"2026-06-03": "17:00–19:30"},aid:'1454b35c-323c-482a-9f05-ffd88eb570d7'},
+  {title:'Mindfulnessyoga på Community Center Brunnsbo',cn:'正念冥想',place:'Hälsolots Hisingen',summary:'在Hisingen健康导航的免费瑜伽课程',dates:{"2026-06-01": "17:00–18:00"},aid:'14560157-f1cf-4388-8b02-818cb3cca087'},
+  {title:'Sinnesrummet Molnet tisdag',cn:'Eldorado Resurscente活动',place:'Eldorado Resurscenter',summary:'在Eldorado Resurscente的社区活动',dates:{"2026-06-02": "09:00–15:30"},aid:'149c2a25-20f2-40af-b5b2-b8c1ec526693'},
+  {title:'Skrivklubb, 9–12 år',cn:'写作俱乐部',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆的社区活动',dates:{"2026-05-28": "16:00–17:30"},aid:'1668a4c7-847d-487a-82a9-e5028aa89541'},
+  {title:'Capoeira öppen träning',cn:'卡波耶拉',place:'Capoeira Sem Fronteiras',summary:'在卡波耶拉俱乐部的健身体验',dates:{"2026-05-28": "18:00–20:30"},aid:'1691aa09-c8ce-489e-bdcf-c8808dd3966d'},
+  {title:'Kamratfredag med IFK Göteborg - Bergsjön',cn:'IFK Göteborg活动',place:'IFK Göteborg',summary:'在IFK Göteborg的社区活动',dates:{"2026-05-29": "19:00–22:00"},aid:'16b9ba1c-a787-43cc-8304-dfb3eb558874'},
+  {title:'Spontanfotboll för tjejer!',cn:'足球活动',place:'Hammarkullehallen',summary:'在Hammarkullen体育馆的足球活动',dates:{"2026-05-28": "17:00–18:00"},aid:'16ca05cd-f7f4-428c-a173-3a7efe18fa5b'},
+  {title:'Träna svenska i naturen',cn:'Kortedala图书馆活动',place:'Kortedala bibliotek',summary:'在Kortedala图书馆的社区活动',dates:{"2026-06-01": "10:00–12:00"},aid:'1751661f-e66a-4285-9bd1-04fbcdcee9a9'},
+  {title:'Drop in med kaffe',cn:'长者咖啡聚会',place:'Mötesplats Mariaträffen',summary:'在mariaträffen社区中心的咖啡社交聚会',dates:{"2026-05-29": "10:00–12:00"},aid:'17615985-d9e1-432a-b7bc-43502df8e909'},
+  {title:'BlackBirdFestival i positivparken',cn:'Positivet i Positivp活动',place:'Positivet i Positivparken',summary:'在Positivet i Positivp的社区活动',dates:{"2026-05-30": "14:00–21:30"},aid:'17cd2f54-1567-481e-810c-8abd81bb96ee'},
+  {title:'Fritt skapande måleri – akryl',cn:'frölunda社区中心活动',place:'Mötesplats Frölunda',summary:'在frölunda社区中心的社区活动',dates:{"2026-05-29": "10:00–12:00"},aid:'17fd6d5a-55fd-4cfc-acdf-89073f4fca40'},
+  {title:'Musikunderhållning',cn:'音乐娱乐',place:'Mötesplats Solängsvägen 53 (fd mötesplats Solängen)',summary:'在Solängen社区中心的音乐演出活动',dates:{"2026-05-28": "14:30–15:00"},aid:'19131913-470e-48b1-8279-ea4ca1167ce1'},
+  {title:'Måla och teckna',cn:'Lillekärr社区中心活动',place:'Mötesplats Lillekärr Södra 55 (fd mötesplats Kärra)',summary:'在Lillekärr社区中心的绘画创作活动',dates:{"2026-06-01": "13:00–14:30"},aid:'19286725-7e2f-445d-8b48-a3c114dcc8f1'},
+  {title:'Konstutställning Högsbo Bibliotek, Axelhuset',cn:'展览',place:'Högsbo bibliotek',summary:'在Högsbo图书馆举办的艺术展览',dates:{"2026-05-29": "", "2026-05-28": ""},aid:'19e16aa9-4fea-43b6-9945-9aa5075816be'},
+  {title:'BRODERIUTMANING med Nils Holgersson',cn:'刺绣活动',place:'Kulturhuset Bergsjön',summary:'在Bergsjön文化中心的社区活动',dates:{"2026-05-29": "", "2026-05-30": "", "2026-05-31": "", "2026-05-28": ""},aid:'1b2c1689-774d-4bdb-92f7-77e9f250b988'},
+  {title:'Öppet hus med musikunderhållning',cn:'音乐娱乐',place:'Mötesplats Askim',summary:'在Askim社区中心的音乐演出活动',dates:{"2026-05-29": "11:00–14:00"},aid:'1c10adf4-d351-4779-943e-81b086839895'},
+  {title:'Utställning: Kristina Sjönnemo',cn:'展览：Kristina Sjönnemo',place:'Frölunda Kulturhus',summary:'在Frölunda文化中心举办的艺术展览',dates:{"2026-05-29": "", "2026-05-30": "", "2026-05-28": ""},aid:'1c3d802f-2116-4560-a666-c046ac5f316d'},
+  {title:'Prova på gitarr - för dig född 2017-2007. Plats: Rosendalsskolan.',cn:'吉他体验',place:'Kulturskolan i Göteborg',summary:'在哥德堡文化学校的社区活动',dates:{"2026-05-28": "15:00–18:00"},aid:'1c76d9f4-d89f-47fd-b3a9-4ac36feeed98'},
+  {title:'Öppet hus årskurs 4-6',cn:'小学开放日',place:'Stenhuset ungdomsverksamhet',summary:'在Stenhuset青年活动的开放参观日',dates:{"2026-06-03": "14:00–16:30"},aid:'1cc9ac25-e88d-4744-80bc-0c705f12991b'},
+  {title:'Äntligen fredag!',cn:'东北区社区中心活动',place:'Mötesplatser Nordost',summary:'在东北区社区中心的社区活动',dates:{"2026-05-29": "12:00–14:00"},aid:'1cdd2bbd-d408-4a06-aff5-81321c48a06d'},
+  {title:'Fixarverkstad',cn:'community center Bru活动',place:'community center Brunnsbo',summary:'在community center Bru的社区活动',dates:{"2026-06-01": "14:00–16:00"},aid:'1d280558-425a-44e7-ae9e-1ebeefadcd30'},
+  {title:'Samtalsgrupp för anhöriga till HBTQIA+personer',cn:'LGBTQ+亲属对话组',place:'Mötesplats Verket',summary:'在Verket社区中心的社区活动',dates:{"2026-05-29": "", "2026-05-30": "", "2026-05-31": "", "2026-06-01": "", "2026-05-28": ""},aid:'1d4138f6-2a4d-4fd3-b240-e3b243995fed'},
+  {title:'Gympa med Anette',cn:'健身操',place:'Mötesplats Landala Kulturcenter',summary:'在Landala文化中心的免费健身操课程',dates:{"2026-06-03": "10:30–11:15"},aid:'1d8fee4e-35a2-4d09-b05f-6d4d9146169d'},
+  {title:'Jobbcoach – stöd i arbetssökande på Medborgarkontoret Biskop',cn:'Medborgarkontoret Bi活动',place:'Medborgarkontoret Biskopsgården',summary:'在Medborgarkontoret Bi的社区活动',dates:{"2026-06-02": "09:30–15:00"},aid:'1e8ba9c2-8d4e-434e-af4b-301aa0143073'},
+  {title:'Herrgrupp',cn:'blidvädersgatan 16 (monsunen)社区中心活动',place:'Mötesplats Blidvädersgatan 16 (Monsunen)',summary:'在blidvädersgatan 16 (monsunen)社区中心的社区活动',dates:{"2026-05-29": "09:30–11:00"},aid:'1ed49d1b-cfee-412a-8d50-e718a752380f'},
+  {title:'Kulturfredagar - Kortedala',cn:'东北区社区中心活动',place:'Mötesplatser Nordost',summary:'在东北区社区中心的文化活动',dates:{"2026-05-29": "13:00–14:30"},aid:'1f4a638f-a7d9-4a37-b8b9-33f4c4fa8a2b'},
+  {title:'Samtalsträff på lätt svenska',cn:'东北区健康中心活动',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的社区活动',dates:{"2026-06-02": "11:00–12:00"},aid:'1ff1ac7f-0578-4488-8e07-6ef30cd8bb64'},
+  {title:'Fikaträff',cn:'东北区健康中心活动',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的社区活动',dates:{"2026-05-29": "10:30–12:00"},aid:'202fffde-cb7f-4394-909c-a7eda2eb4b9e'},
+  {title:'Träning med bebis i gym, Vättlefjälls motionscentrum',cn:'带宝宝健身',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的健身体验',dates:{"2026-05-28": "10:00–12:00"},aid:'2152da1c-d9c2-4b26-8680-c3f413ea1e33'},
+  {title:'Utställning: Djetinjstvo u ratu: crteži iz Srebrenice/Barndom i krig: teckningar från Srebrenica',cn:'展览：Djetinjstvo u ratu: ',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆举办的艺术展览',dates:{"2026-05-30": "08:00–20:00"},aid:'21dd7881-e334-4d6c-bb5d-bb49c7c47ae1'},
+  {title:'Yoga',cn:'东北区健康中心活动',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的免费瑜伽课程',dates:{"2026-06-01": "14:30–15:20"},aid:'2214f9a1-9077-4faf-bbce-db0302ce63a2'},
+  {title:'Fredagsklubben Schack',cn:'国际象棋',place:'Manhem Schacksällskap',summary:'在Manhem Schacksällska的桌游或棋类活动',dates:{"2026-05-29": "17:00–21:00"},aid:'22652c33-01fb-4e6b-b0ef-9240835986bf'},
+  {title:'Balansträning',cn:'högsbo社区中心活动',place:'Mötesplats Högsbo',summary:'在högsbo社区中心的健身体验',dates:{"2026-06-02": "13:00–13:45"},aid:'2296875f-029b-4ff0-8e4b-8d458c22df2a'},
+  {title:'Sagostund på biblioteket',cn:'故事时间',place:'Hammarkullens bibliotek',summary:'在Hammarkullens biblio的儿童故事朗读',dates:{"2026-05-29": "10:30–11:30"},aid:'23457be0-5c11-4b66-aa06-b237356913e7'},
+  {title:'Stickcafé med högläsning ur Nils Holgerssons underbara resa genom Sverige',cn:'朗读活动',place:'Kulturhuset Bergsjön',summary:'在Bergsjön文化中心的儿童故事朗读',dates:{"2026-06-01": "18:00–19:30"},aid:'23adec6c-e0c9-477f-b9d0-4f3f60cdd2fc'},
+  {title:'Måndagskul på Plikta',cn:'Plikta活动公园活动',place:'Plikta Aktivitetspark',summary:'在Plikta活动公园的社区活动',dates:{"2026-06-01": "10:30–12:00"},aid:'23be10bf-59b9-47da-8dc5-4c7f44221c3c'},
+  {title:'Gratis familjeträning Lundbybadet',cn:'免费家庭健身',place:'Lundbybadet',summary:'在Lundby游泳馆的免费健身体验',dates:{"2026-06-03": "16:00–16:45"},aid:'252dd666-f253-4600-9738-cd1a1b0d2a02'},
+  {title:'Prova Polarbibblo på romani chib!',cn:'Polarbibblo体验',place:'Bergsjöns bibliotek',summary:'在Bergsjön图书馆的社区活动',dates:{"2026-05-28": "15:00–16:00"},aid:'25e70b81-5eb5-4b89-b7b7-ac0686122317'},
+  {title:'Prova på samtalskort i grupp',cn:'jaegerdorff社区中心活动',place:'Mötesplats Jaegerdorff',summary:'在jaegerdorff社区中心的社区活动',dates:{"2026-06-02": "13:00–14:30"},aid:'265b79d8-b039-408b-883b-472a2b84d3d7'},
+  {title:'Inomhusboule',cn:'法式滚球',place:'Mötesplats Kaggeled',summary:'在kaggeled社区中心的社区活动',dates:{"2026-06-02": "13:30–15:00"},aid:'26898c2b-effe-44d9-a1eb-2590b83eb606'},
+  {title:'Boule, pingis och dart',cn:'乒乓球',place:'Växthuset',summary:'在Växthuset温室的社区活动',dates:{"2026-05-28": "10:30–12:30"},aid:'26c96b9c-6e7c-450a-bffc-f1525539a9d8'},
+  {title:'Bokstund - med Bibbo!',cn:'Backa图书馆活动',place:'Backa bibliotek',summary:'在Backa图书馆的社区活动',dates:{"2026-06-02": "15:00–15:30"},aid:'274a927a-5af3-46ed-8735-e0a6c19ddebc'},
+  {title:'Keramik med Kulturskolan - drop in (6-8 år med vuxen)',cn:'陶艺活动',place:'](/wps/portal/kalendarium/kalendarium-start?activityId=2777bd19-8081-43b9-b3c0-d9befecf176d)Kulturhuset Bergsjön',summary:'在Bergsjön文化中心的陶艺创作体验',dates:{"2026-05-28": "13:30–14:30"},aid:'2777bd19-8081-43b9-b3c0-d9befecf176d'},
+  {title:'Familjeteater: Den lilla farbrorn',cn:'Blå Stället文化中心活动',place:'Kulturhuset Blå Stället',summary:'在Blå Stället文化中心的社区活动',dates:{"2026-05-30": "14:00–14:45"},aid:'2789ce20-8705-4086-b0ae-e3fd7671fb6a'},
+  {title:'Sagostund, från 3 år',cn:'故事时间',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆的儿童故事朗读',dates:{"2026-05-29": "10:30–11:00"},aid:'27a62a33-713b-4cdb-a354-ab678018e876'},
+  {title:'Öppet hus på Mötesplats Tuve',cn:'Tuve社区中心活动',place:'Mötesplats Tuve',summary:'在Tuve社区中心的开放参观日',dates:{"2026-05-29": "11:00–14:00"},aid:'28057c66-763b-40bb-bafc-f742e0d67acf'},
+  {title:'Junior landträning 9-13 år, Slottsskogsvallens idrottscentrum',cn:'Slottsskogsvallens i活动',place:'Slottsskogsvallens idrottscentrum',summary:'在Slottsskogsvallens i的健身体验',dates:{"2026-06-03": "17:00–18:00"},aid:'280a1c95-65de-4ad0-a47b-f7e1a09b0a4d'},
+  {title:'Sagostund på Majornas bibliotek',cn:'故事时间',place:'Majornas bibliotek',summary:'在Majorna图书馆的儿童故事朗读',dates:{"2026-05-29": "10:00–10:30"},aid:'280e2723-4c74-4e40-a791-8621d2b203cc'},
+  {title:'Föräldrar- och barnträning',cn:'东北区健康中心活动',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的健身体验',dates:{"2026-05-29": "09:30–10:20"},aid:'2842f731-af02-4e65-b2ef-4ed4cd4f6f26'},
+  {title:'Filmklubben',cn:'Biskopsgården图书馆活动',place:'Biskopsgårdens bibliotek',summary:'在Biskopsgården图书馆的社区活动',dates:{"2026-06-01": "11:00–13:30"},aid:'2907f9e8-06de-4129-9732-05012e511f43'},
+  {title:'Träna i gymmet',cn:'健身房锻炼',place:'Växthuset',summary:'在Växthuset温室的社区活动',dates:{"2026-05-28": "10:00–13:00"},aid:'29230a89-d089-41c7-a9b4-9fd31f2a55a5'},
+  {title:'Kom och måla tillsammans!',cn:'一起来画画',place:'Frölunda Kulturhus',summary:'在Frölunda文化中心的绘画创作活动',dates:{"2026-05-29": "", "2026-05-30": "", "2026-05-31": "", "2026-05-28": ""},aid:'2a37f1ef-b57c-4a50-8143-fa57746a8669'},
+  {title:'Social rådgivning – drop‑in på Medborgarkontoret Biskop',cn:'Medborgarkontoret Bi活动',place:'Medborgarkontoret Biskopsgården',summary:'在Medborgarkontoret Bi的社区活动',dates:{"2026-06-01": "10:00–12:00"},aid:'2a56040d-24aa-4b23-a0ee-f6c54346f263'},
+  {title:'Gympa extra allt',cn:'健身操',place:'Mötesplats Blidvädersgatan 16 (Monsunen)',summary:'在blidvädersgatan 16 (monsunen)社区中心的免费健身操课程',dates:{"2026-06-03": "10:30–11:15"},aid:'2a83f022-6df1-4af3-ab9f-d16835c22b51'},
+  {title:'Boule - Gamlestaden',cn:'法式滚球',place:'Mötesplatser Nordost',summary:'在东北区社区中心的社区活动',dates:{"2026-06-01": "11:00–13:00"},aid:'2b55b2e8-5e11-434f-b94d-0c2613885f06'},
+  {title:'Dans på Lundbybadet',cn:'Hisingen健康导航活动',place:'Hälsolots Hisingen',summary:'在Hisingen健康导航的舞蹈课程',dates:{"2026-06-02": "13:00–14:00"},aid:'2b96ab93-dc35-43db-a06e-3160fca1bfcb'},
+  {title:'Gåfotboll',cn:'足球活动',place:'Växthuset',summary:'在Växthuset温室的足球活动',dates:{"2026-06-01": "10:00–11:00"},aid:'2bd0601a-1756-4af5-b441-f9a297b0a4fe'},
+  {title:'Lek på Bygglekplatsen',cn:'Biskopsgården建筑乐园活动',place:'Bygglekplatsen i Biskopsgården',summary:'在Biskopsgården建筑乐园的社区活动',dates:{"2026-06-03": "10:00–12:00"},aid:'2c0c99b4-0226-4859-b3fe-fe99a9c772d5'},
+  {title:'Schackklubben',cn:'国际象棋',place:'Opaltorgets Bibliotek',summary:'在Opaltorget图书馆的桌游或棋类活动',dates:{"2026-05-31": "14:00–15:00"},aid:'2c328cf9-9c2d-4307-84c9-d4c4471d7eea'},
+  {title:'Utställning: Djetinjstvo u ratu: crteži iz Srebrenice/Barndom i krig: teckningar från Srebrenica',cn:'展览：Djetinjstvo u ratu: ',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆举办的艺术展览',dates:{"2026-05-29": "08:00–20:00"},aid:'2c5f2cea-4d55-45ce-b591-baef6769a8c8'},
+  {title:'Cykelköket Navet',cn:'自行车维修',place:'Göteborg Stad / S-L Samuelsson',summary:'在哥德堡市政府的自行车维修服务',dates:{"2026-05-28": "15:00–20:00"},aid:'2cf870d6-0ad7-4b40-8789-c233da1b3eee'},
+  {title:'Suomalainen iltapäivä / Eftermiddagar på finska',cn:'Tuve社区中心活动',place:'Mötesplats Tuve',summary:'在Tuve社区中心的社区活动',dates:{"2026-06-02": "13:00–14:30"},aid:'2d6c9312-1e31-4ea2-a40c-5007d5beb101'},
+  {title:'Öppet gym',cn:'开放健身房',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的社区活动',dates:{"2026-06-02": "09:00–12:00"},aid:'2d7f5a9c-5c04-4357-a1c9-0b111bd6565e'},
+  {title:'Virkcafé',cn:'Backa图书馆活动',place:'Backa bibliotek',summary:'在Backa图书馆的社区活动',dates:{"2026-06-02": "16:30–18:00"},aid:'2da9aab9-1bad-4433-9240-84b60c85afbc'},
+  {title:'Senior Sport School i Sydvästra Göteborg',cn:'长者运动学校',place:'Mötesplatser Sydväst',summary:'在西南区社区中心的长者社交活动',dates:{"2026-05-29": "", "2026-05-30": "", "2026-05-31": "", "2026-05-28": ""},aid:'2dd6914f-d58b-434c-8088-9d0344fa7fd0'},
+  {title:'Fritidsverksamheten Linden i positivparken',cn:'休闲活动',place:'Fritidsklubben Linden',summary:'在Linden休闲俱乐部的青少年休闲活动',dates:{"2026-05-29": "13:30–17:00"},aid:'2ee5609d-2fee-4a7b-82f7-35f404403c11'},
+  {title:'Träna i gymmet',cn:'健身房锻炼',place:'Växthuset',summary:'在Växthuset温室的社区活动',dates:{"2026-06-03": "09:00–12:00"},aid:'2fe63049-4580-4983-bc0a-024b0551ddc3'},
+  {title:'Läxhjälp för vuxna',cn:'作业辅导',place:'Biskopsgårdens bibliotek',summary:'在Biskopsgården图书馆的免费课业辅导',dates:{"2026-06-01": "17:00–19:00"},aid:'30127b40-10e7-4e6f-90aa-a40ecbcabeb2'},
+  {title:'Lek på Bygglekplatsen',cn:'Biskopsgården建筑乐园活动',place:'Bygglekplatsen i Biskopsgården',summary:'在Biskopsgården建筑乐园的社区活动',dates:{"2026-06-02": "10:00–12:00"},aid:'304d1dfe-43f5-4440-8554-e1b18c980879'},
+  {title:'Naturvandring med tema i Guldheden',cn:'Guldheden社区中心活动',place:'Mötesplats Guldheden i samarbete med Guldhedskyrkan',summary:'在Guldheden社区中心的社区活动',dates:{"2026-06-03": "12:30–14:30"},aid:'30bbfd71-8de2-43bd-a4c6-6db0cc5cae50'},
+  {title:'Mötesplatsen Spacet',cn:'Tynnered团队活动',place:'Team Tynnered',summary:'在Tynnered团队的社区活动',dates:{"2026-05-29": "", "2026-05-30": "", "2026-05-31": "", "2026-05-28": ""},aid:'318c3c11-8297-418e-aaf4-aed8c06c7619'},
+  {title:'Öppen segling, kanot och SUP i Jubileumsparken',cn:'Jubileumsparken活动',place:'Jubileumsparken',summary:'在Jubileumsparken的社区活动',dates:{"2026-05-31": "12:30–16:00"},aid:'3243e321-565a-4374-901e-09e64d407068'},
+  {title:'Öppen ateljé',cn:'开放画室',place:'Kulturhuset Blå Stället',summary:'在Blå Stället文化中心的绘画创作活动',dates:{"2026-06-02": "13:00–16:00"},aid:'324edf62-9bca-4aa0-b666-91009cb4d04b'},
+  {title:'Fredagsmorgon med digitalt stöd',cn:'数字支持服务',place:'Mötesplats Bergkristallparken Tynnered',summary:'在Bergkristall公园的数字技能支持',dates:{"2026-05-29": "09:00–10:30"},aid:'3261d7a4-3aca-4a5e-8854-48c519f1213d'},
+  {title:'Värme som hälsorisk',cn:'Frölunda图书馆活动',place:'Frölunda bibliotek',summary:'在Frölunda图书馆的社区活动',dates:{"2026-06-02": "11:00–12:00"},aid:'32c60b65-5f78-4ea0-86bc-c57a84fcb60c'},
+  {title:'Gratis träning för kvinnor, Vättlefjälls motionscentrum',cn:'女性免费健身',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的免费健身体验',dates:{"2026-06-02": "10:45–11:30"},aid:'33188ad3-be8e-4ad3-97ed-bd1beda4c9b0'},
+  {title:'Do you speak English?',cn:'frölunda社区中心活动',place:'Mötesplats Frölunda',summary:'在frölunda社区中心的社区活动',dates:{"2026-06-03": "12:15–13:15"},aid:'333cd041-a862-4098-9d9e-f5f57be2a1aa'},
+  {title:'Klipp och klistra din egen poesi!',cn:'Backa图书馆活动',place:'Backa bibliotek',summary:'在Backa图书馆的社区活动',dates:{"2026-05-30": "13:00–13:30"},aid:'33fe27b7-664e-4fb3-9e45-2015b63da3f6'},
+  {title:'Multisensoriskt musikdrama',cn:'Eldorado Resurscente活动',place:'Eldorado Resurscenter',summary:'在Eldorado Resurscente的音乐演出活动',dates:{"2026-06-02": "14:00–14:40"},aid:'342a305a-7fcd-4163-b9d5-138932466cd9'},
+  {title:'Berättelseverkstad',cn:'Backa图书馆活动',place:'Backa bibliotek',summary:'在Backa图书馆的社区活动',dates:{"2026-05-30": "14:00–14:45"},aid:'346b6424-fd10-4a11-a37d-394cd711812d'},
+  {title:'Lek på Bygglekplatsen',cn:'Biskopsgården建筑乐园活动',place:'Bygglekplatsen i Biskopsgården',summary:'在Biskopsgården建筑乐园的社区活动',dates:{"2026-06-01": "10:00–12:00"},aid:'35c19148-a3a6-4c0e-967d-4fbb23719ea8'},
+  {title:'Ponnyridning på Barnens zoo',cn:'小马骑行',place:'Slottsskogen',summary:'在Slottsskogen公园的动物互动体验',dates:{"2026-05-28": "10:00–12:30"},aid:'35d6ae5d-00e5-4332-95db-1d246e3a5b71'},
+  {title:'Föräldrar- och babyträning',cn:'东北区健康中心活动',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的健身体验',dates:{"2026-06-02": "10:30–11:20"},aid:'35eaf644-f3d4-4f98-a0a8-af540d41fbc8'},
+  {title:'Träning med instruktör - på Smyckeparkens aktivitetsyta',cn:'教练指导健身',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的健身体验',dates:{"2026-06-01": "17:30–18:30"},aid:'3678509b-c271-488a-ad2a-b06293ea63b5'},
+  {title:'Bygg på Bygglekplatsen',cn:'建筑乐园玩耍',place:'Bygglekplatsen i Biskopsgården',summary:'在Biskopsgården建筑乐园的社区活动',dates:{"2026-05-30": "10:00–16:00"},aid:'36d7512f-b5e9-440f-aa10-06bddf039096'},
+  {title:'En resa tillbaka i tiden!',cn:'kålltorp社区中心活动',place:'Mötesplats Kålltorp',summary:'在kålltorp社区中心的社区活动',dates:{"2026-06-03": "11:00–12:00"},aid:'36e6a9eb-bf21-4048-9bc2-229b9be5f56a'},
+  {title:'Sittgympa',cn:'健身操',place:'Mötesplats Kaggeled',summary:'在kaggeled社区中心的免费健身操课程',dates:{"2026-05-29": "10:30–11:15"},aid:'37d5ea1a-236c-4c00-9c84-cdac66c17ae1'},
+  {title:'Måndagsträffen',cn:'önnered社区中心活动',place:'Mötesplats Önnered',summary:'在önnered社区中心的社区活动',dates:{"2026-06-01": "11:00–13:00"},aid:'37e23101-daf8-4798-b42d-59731a2e4c53'},
+  {title:'Boule i alla väder',cn:'法式滚球',place:'Mötesplats Landala Kulturcenter',summary:'在Landala文化中心的社区活动',dates:{"2026-05-29": "12:00–13:00"},aid:'383afa97-fe87-408e-97e1-33520ca4e39d'},
+  {title:'Flerspråkig sagostund på svenska och arabiska!',cn:'故事时间',place:'Backa bibliotek',summary:'在Backa图书馆的儿童故事朗读',dates:{"2026-05-30": "11:00–11:30"},aid:'38826438-e158-454e-b12e-89db755c5062'},
+  {title:'KulturPilen - Öppen verksamhet - 10 -12 år',cn:'文化之箭活动',place:'Kulturskolan Göteborg och Fritid i sydväst',summary:'在哥德堡文化学校的文化活动',dates:{"2026-06-01": "14:00–17:00"},aid:'38c1098d-8d78-48bb-9b37-f0804068c5b0'},
+  {title:'Dansmix',cn:'混合舞蹈',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的舞蹈课程',dates:{"2026-05-28": "14:00–14:50"},aid:'39069a41-b6f0-466e-9b22-7b3c25d6e87b'},
+  {title:'Öppet schack på Kåken',cn:'国际象棋',place:'Kulturhuset Kåken',summary:'在Kåken文化中心的桌游或棋类活动',dates:{"2026-06-03": "14:00–15:30"},aid:'396cf679-ed74-4bc6-95e5-c88011ef3ee3'},
+  {title:'Politik påverkar ditt liv även om du inte röstar',cn:'政治讲座',place:'Tuve bibliotek',summary:'在Tuve图书馆的社区活动',dates:{"2026-05-28": "18:00–19:00"},aid:'39f62a4d-0593-4adb-bd24-9d5b59c96b7c'},
+  {title:'Samtal över en kopp kaffe',cn:'Lunden社区中心活动',place:'Mötesplats Lunden',summary:'在Lunden社区中心的咖啡社交聚会',dates:{"2026-06-02": "13:00–14:30"},aid:'3a213c27-c6f7-4cc6-a54d-ca7f2e56510f'},
+  {title:'Schack och engelska på Frejaskolan',cn:'国际象棋',place:'Skola som arena',summary:'在学校运动场的桌游或棋类活动',dates:{"2026-05-29": "17:00–19:00"},aid:'3a58f282-f02f-46be-8a03-9e84fc15e08c'},
+  {title:'Språkkafé',cn:'语言咖啡馆（Bergsjön图书馆）',place:'Bergsjöns bibliotek',summary:'在Bergsjön图书馆练习瑞典语会话',dates:{"2026-06-02": "17:00–19:00"},aid:'3aff9012-162e-41b0-a625-8b7f08086c1e'},
+  {title:'Öppet hus årskurs 4-6',cn:'小学开放日',place:'Stenhuset ungdomsverksamhet',summary:'在Stenhuset青年活动的开放参观日',dates:{"2026-05-28": "14:00–16:30"},aid:'3b373eef-4847-42a2-b16d-4fec2d4acc78'},
+  {title:'Sy- och stickkafé',cn:'缝纫编织咖啡馆',place:'Kulturhuset Blå Stället',summary:'在Blå Stället文化中心的手工制作活动',dates:{"2026-05-28": "15:00–19:00"},aid:'3b837587-791a-42e4-9a30-e11fd20351b5'},
+  {title:'FIXARVERKSTAD',cn:'Community center Bru活动',place:'Community center Brunnsbo',summary:'在Community center Bru的社区活动',dates:{"2026-06-01": "14:00–16:00"},aid:'3b86e61d-823b-4744-8040-ff68667c4530'},
+  {title:'Läger och massgravar i Bosnien och Hercegovina/Vita bandet',cn:'波黑战争历史讲座',place:'Frölunda bibliotek',summary:'在Frölunda图书馆的社区活动',dates:{"2026-05-28": "18:00–19:00"},aid:'3b93619e-6c38-4e9a-965c-783ac8be21a1'},
+  {title:'Spela schack (för barn och unga)',cn:'国际象棋',place:'](/wps/portal/kalendarium/kalendarium-start?activityId=3b9c98e5-6ba1-40c9-b3fc-876900cee636)Biskopsgårdens bibliotek',summary:'在Biskopsgården图书馆的桌游或棋类活动',dates:{"2026-05-28": "17:00–18:50"},aid:'3b9c98e5-6ba1-40c9-b3fc-876900cee636'},
+  {title:'Gympa',cn:'健身操',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的免费健身操课程',dates:{"2026-06-03": "11:00–11:50"},aid:'3ba69e82-4e4f-4670-ac32-23c2a06e1001'},
+  {title:'Utställning: Bergsjön kan',cn:'展览：Bergsjön kan',place:'Kulturhuset Bergsjön',summary:'在Bergsjön文化中心举办的艺术展览',dates:{"2026-05-30": "", "2026-05-31": "", "2026-05-28": ""},aid:'3c32a77c-9422-4b52-940a-1e92d499845a'},
+  {title:'Pingis för alla åldrar',cn:'乒乓球',place:'Axelhuset',summary:'在Axelhuset的社区活动',dates:{"2026-05-28": "14:00–16:00"},aid:'3cb54b5e-1d6b-421d-a187-7a2456cca44f'},
+  {title:'Ponnyridning på Barnens zoo',cn:'小马骑行',place:'Slottsskogen',summary:'在Slottsskogen公园的动物互动体验',dates:{"2026-05-30": "10:00–12:30"},aid:'3d0eddc1-5883-4615-9782-28d65d0d618c'},
+  {title:'Konstverket',cn:'艺术工坊',place:'Verket - en plats för kreativitet och möten',summary:'在Verket - en plats fö的社区活动',dates:{"2026-05-28": "18:00–20:00"},aid:'3d182140-9d8a-412f-9601-8dfb43eadd2e'},
+  {title:'Digital handledning',cn:'数字指导',place:'Gamlestadens Bibliotek',summary:'在Gamlestadens Bibliot的数字技能支持',dates:{"2026-06-03": "12:00–13:00"},aid:'3d186132-8a11-4790-8567-16cdfde231d1'},
+  {title:'Träning med instruktör - i Dalens utegym',cn:'教练指导健身',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的健身体验',dates:{"2026-05-28": "17:00–18:00"},aid:'3d442c4c-3547-4bd5-ab2a-046c10542cd9'},
+  {title:'Workshop i bild och keramik - kortkurs 4 dagar för dig född 2007-2015. Plats: Gustaviskolan',cn:'陶艺活动',place:'Kulturskolan i Göteborg',summary:'在哥德堡文化学校的陶艺创作体验',dates:{"2026-05-28": "14:45–18:00"},aid:'3e0e1511-83ff-450a-a974-3631d355842b'},
+  {title:'Fransk konversation',cn:'法语会话',place:'Mötesplats Verket',summary:'在Verket社区中心练习法语会话',dates:{"2026-05-28": "11:00–13:00"},aid:'3ee9c9ee-a419-4c95-a3f5-597b1e85a6fd'},
+  {title:'Gympa bas',cn:'基础健身操',place:'Mötesplats Kyrkbytorget 6',summary:'在Kyrkbytorget社区中心的免费健身操课程',dates:{"2026-05-29": "11:00–12:30"},aid:'3f0967dc-422f-491e-a3f1-8fa0dbf85a2e'},
+  {title:'Uppläsning: Det växande hjärtat',cn:'Lagerhuset图书馆活动',place:'Lagerhusets Bibliotek',summary:'在Lagerhuset图书馆的社区活动',dates:{"2026-06-01": "17:30–18:30"},aid:'3f9c93f8-ed51-4ccb-9e68-5050cb0b5684'},
+  {title:'Poesiverkstad - på lätt svenska',cn:'Bergsjön图书馆活动',place:'Bergsjöns bibliotek',summary:'在Bergsjön图书馆的社区活动',dates:{"2026-06-01": "16:30–19:00"},aid:'3fd64eaf-6898-47a8-81cd-c5eaf106cd3b'},
+  {title:'Träna med instruktör - i Tanneskärsgatans utegym',cn:'体育与协会管理局活动',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的社区活动',dates:{"2026-05-29": "10:00–11:00"},aid:'4107e498-7edc-4b6e-92aa-d2b419c6f0ae'},
+  {title:'Pingis för alla!',cn:'乒乓球',place:'Mötesplats Högsbo',summary:'在högsbo社区中心的社区活动',dates:{"2026-06-03": "13:00–14:30"},aid:'41b76883-9782-4b3c-b8db-57c43514b57d'},
+  {title:'Fäktning i Nordstan',cn:'Allez Fäktförening活动',place:'Allez Fäktförening',summary:'在Allez Fäktförening的社区活动',dates:{"2026-05-31": "11:00–15:00"},aid:'422b5536-ea50-47f2-a371-78ea1337d428'},
+  {title:'KulturPilen - Öppen verksamhet - 10 -12 år',cn:'文化之箭活动',place:'Kulturskolan Göteborg och Fritid i sydväst',summary:'在哥德堡文化学校的文化活动',dates:{"2026-05-29": "14:00–17:00"},aid:'424f78be-f8c0-4002-ab4c-e866467d1ccf'},
+  {title:'Gympa på storbild',cn:'健身操',place:'Mötesplats Solängsvägen 53 (fd mötesplats Solängen)',summary:'在Solängen社区中心的免费健身操课程',dates:{"2026-06-03": "10:30–11:30"},aid:'42db1440-af30-422c-a5e8-23ac08269a66'},
+  {title:'K-dance i Tuve',cn:'K-pop舞蹈',place:'Mötesplats Myntet',summary:'在Myntet社区中心的社区活动',dates:{"2026-05-28": "17:00–19:30"},aid:'42e104b5-d5a8-47b3-9393-005ae1f2f680'},
+  {title:'Klädbyte - sommarkläder',cn:'Kortedala图书馆活动',place:'Kortedala bibliotek',summary:'在Kortedala图书馆的社区活动',dates:{"2026-05-31": "13:00–14:00"},aid:'42f04d3d-ed37-46df-8c41-09ce061e11fe'},
+  {title:'Canasta',cn:'Landala文化中心活动',place:'Mötesplats Landala Kulturcenter',summary:'在Landala文化中心的社区活动',dates:{"2026-06-02": "13:00–15:30"},aid:'4383a58e-7975-4f8b-8ff8-3cfb149c9522'},
+  {title:'Yoga lugn',cn:'东北区健康中心活动',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的免费瑜伽课程',dates:{"2026-05-29": "09:00–09:50"},aid:'43ce79b0-a397-4f4e-825d-63825cb13513'},
+  {title:'Fraktalritning',cn:'högsbo社区中心活动',place:'Mötesplats Högsbo',summary:'在högsbo社区中心的社区活动',dates:{"2026-05-29": "13:00–14:30"},aid:'43f45450-6724-45ad-8084-55bd5540a9ca'},
+  {title:'Pop Up gymnastik på Ellen Keyskolan för barn (7-13 år)',cn:'学校运动场活动',place:'](/wps/portal/kalendarium/kalendarium-start?activityId=45721872-04ba-42cd-90b3-87c2b05357bc)Skola som arena',summary:'在学校运动场的社区活动',dates:{"2026-05-31": "16:30–17:30"},aid:'45721872-04ba-42cd-90b3-87c2b05357bc'},
+  {title:'Kantele LABB',cn:'Bergsjön文化中心活动',place:'Kulturhuset Bergsjön',summary:'在Bergsjön文化中心的社区活动',dates:{"2026-05-30": "14:00–15:30"},aid:'45a9fc22-48f2-4559-a2e4-187459e06d50'},
+  {title:'Fotoutställning Konsertbilder + konsert',cn:'展览',place:'Kulturlagret',summary:'在Kulturlagret文化空间举办的艺术展览',dates:{"2026-05-28": "18:00–21:00"},aid:'46069105-5532-4754-a472-0c806960a874'},
+  {title:'Träna yoga på stol!',cn:'Tuve社区中心活动',place:'Mötesplats Tuve',summary:'在Tuve社区中心的免费瑜伽课程',dates:{"2026-05-29": "12:30–13:30"},aid:'4673b99f-4d1a-4788-bf32-26963bbfe3f2'},
+  {title:'Pilatesboll',cn:'普拉提球',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的社区活动',dates:{"2026-05-28": "13:00–13:50"},aid:'46765844-51cd-4736-bdf8-1a001fef4138'},
+  {title:'Spela ukulele med oss!',cn:'尤克里里',place:'Mötesplats Frölunda',summary:'在frölunda社区中心的桌游或棋类活动',dates:{"2026-06-01": "13:15–14:15"},aid:'4696395f-c8df-40a3-b814-89643509843e'},
+  {title:'Atom Studios',cn:'Atom录音室活动',place:'Atom Studios',summary:'在Atom录音室的社区活动',dates:{"2026-06-02": "16:00–21:00"},aid:'46cebb79-027f-42ed-be94-43eafca17e09'},
+  {title:'Vernissage: Risotryck',cn:'Lagerhuset图书馆活动',place:'Lagerhusets Bibliotek',summary:'在Lagerhuset图书馆的社区活动',dates:{"2026-05-29": "15:00–17:00"},aid:'46d192e9-4d33-4e4c-b714-826405758147'},
+  {title:'Kreativ måndag, från 2 år',cn:'市立图书馆活动',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆的社区活动',dates:{"2026-06-01": "13:00–14:00"},aid:'46ec80c7-b825-4cae-bc08-05b0c7fd6c86'},
+  {title:'Pingis för alla åldrar',cn:'乒乓球',place:'Axelhuset',summary:'在Axelhuset的社区活动',dates:{"2026-06-02": "14:00–16:00"},aid:'47156a68-de47-4c95-815d-f20bfcbc20c7'},
+  {title:'Utställning: HDK-Valand – Ligger på marken, tittar upp',cn:'展览：HDK-Valand',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆举办的艺术展览',dates:{"2026-05-28": "10:00–20:00"},aid:'472fde54-7674-4612-a6fc-18b58a9e12b6'},
+  {title:'Öppna förskolan TilLiten',cn:'Socialförvaltningen 活动',place:'Socialförvaltningen Nordost',summary:'在Socialförvaltningen 的社区活动',dates:{"2026-06-03": "09:00–12:00"},aid:'477fa681-7e8c-40bd-b422-b1134554c0f8'},
+  {title:'Poesi drop-in',cn:'Angered图书馆活动',place:'Angereds bibliotek',summary:'在Angered图书馆的社区活动',dates:{"2026-06-01": "14:30–15:15"},aid:'482fc917-a0e1-465f-a421-22676557a4b0'},
+  {title:'Utställning: HDK-Valand – Ligger på marken, tittar upp',cn:'展览：HDK-Valand',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆举办的艺术展览',dates:{"2026-05-31": "10:00–20:00"},aid:'4846724f-0335-4117-97eb-e4002b22828f'},
+  {title:'Utställning: Negativiteten',cn:'展览：Negativiteten',place:'Frölunda Kulturhus',summary:'在Frölunda文化中心举办的艺术展览',dates:{"2026-05-30": "", "2026-05-31": ""},aid:'493046c3-6623-42bf-8147-ab72e540a7a5'},
+  {title:'Öppen ateljé för seniorer',cn:'开放画室',place:'Kulturhuset Kåken',summary:'在Kåken文化中心的绘画创作活动',dates:{"2026-06-01": "13:00–15:00"},aid:'4963aa23-3433-4d17-917a-49f26e3b7e84'},
+  {title:'Senior sport school Centrum',cn:'长者运动学校',place:'Mötesplatser Centrum',summary:'在市中心社区中心的长者社交活动',dates:{"2026-06-01": "13:00–15:00"},aid:'4999a7e8-65c2-49bb-8317-a8de64af84e6'},
+  {title:'Språkcafé',cn:'语言咖啡馆（Backa图书馆）',place:'Backa bibliotek',summary:'在Backa图书馆练习瑞典语会话',dates:{"2026-06-02": "14:00–15:00"},aid:'49e246fe-0281-47e0-ba05-25a676cc31a4'},
+  {title:'Loppis',cn:'Landala文化中心活动',place:'Mötesplats Landala Kulturcenter',summary:'在Landala文化中心的社区活动',dates:{"2026-06-01": "11:00–14:30"},aid:'4a148383-80f7-44d8-844c-65a92b1a6be9'},
+  {title:'Gratis träning med bebis i gymmet',cn:'带宝宝健身',place:'Tuvevallens motionscentrum',summary:'在Tuvevallens motionsc的免费健身体验',dates:{"2026-06-02": "12:30–13:30"},aid:'4a26b75a-2b32-4dec-a9e5-d984235029a4'},
+  {title:'Spansk konversation',cn:'Verket社区中心活动',place:'Mötesplats Verket',summary:'在Verket社区中心练习语言会话',dates:{"2026-06-01": "13:00–15:00"},aid:'4bdefbe0-2e83-4d5c-9bcb-368311e4250b'},
+  {title:'Sällskapsspel: Rummikub',cn:'Verket社区中心活动',place:'Mötesplats Verket',summary:'在Verket社区中心的桌游或棋类活动',dates:{"2026-06-01": "11:30–15:00"},aid:'4c45a2e8-dc6d-425f-8c11-9db01bb00a01'},
+  {title:'Öppet hus årskurs 4-6',cn:'小学开放日',place:'Stenhuset ungdomsverksamhet',summary:'在Stenhuset青年活动的开放参观日',dates:{"2026-06-02": "14:00–16:30"},aid:'4c90ddcb-e61e-4ba4-9a47-c27caff8bc1c'},
+  {title:'Senior sport school Centrum',cn:'长者运动学校',place:'Mötesplatser Centrum',summary:'在市中心社区中心的长者社交活动',dates:{"2026-05-28": "13:00–15:00"},aid:'4c9e3ca9-922b-4a73-ac4b-23de5e2dc927'},
+  {title:'Öppet hus i Angered',cn:'Angered开放日',place:'Mötesplatser Nordost',summary:'在东北区社区中心的开放参观日',dates:{"2026-05-29": "10:00–12:00"},aid:'4cbd2d1b-7f3d-42f0-bd4a-aa36752acef0'},
+  {title:'Träning med instruktör - på Länsmansgårdens aktivitetsyta',cn:'教练指导健身',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的健身体验',dates:{"2026-06-01": "11:00–12:00"},aid:'4db6ec97-1de1-4c4a-b1a8-d079ee8a4d1a'},
+  {title:'Digital handledning - Torslanda bibliotek',cn:'数字指导',place:'Torslanda bibliotek',summary:'在Torslanda图书馆的图书馆活动',dates:{"2026-05-28": "13:00–14:00"},aid:'4e998d8f-bfd8-4cf6-a23f-94207c31ce60'},
+  {title:'Läs och träna svenska',cn:'市立图书馆活动',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆的社区活动',dates:{"2026-06-01": "14:00–15:15"},aid:'4ee7f63b-1e53-425c-a4e3-76cd39516d66'},
+  {title:'Föreläsning med polisen om bedrägerier',cn:'högsbo社区中心活动',place:'Mötesplats Högsbo',summary:'在högsbo社区中心的社区活动',dates:{"2026-05-29": "13:00–14:00"},aid:'4eeb43b9-7b52-47f0-a409-aa2105fff778'},
+  {title:'Styrka och balans',cn:'力量与平衡训练',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的社区活动',dates:{"2026-06-03": "11:00–11:50"},aid:'4ef11d6c-fb17-412e-86f2-7350a9a6e060'},
+  {title:'Vill du friska upp dina spanskakunskaper?',cn:'Sandarna社区中心活动',place:'Mötesplats Sandarna',summary:'在Sandarna社区中心的社区活动',dates:{"2026-05-29": "10:00–11:30"},aid:'4f033c21-353f-47b3-a034-0136670d499b'},
+  {title:'Vi skapar en jättelång girlang tillsammans',cn:'Hammarkullens biblio活动',place:'Hammarkullens bibliotek',summary:'在Hammarkullens biblio的社区活动',dates:{"2026-05-30": "11:00–15:00"},aid:'4f8d6c4b-843a-4d65-ae9b-9cd32054c274'},
+  {title:'Göteborgs eget Alcatraz',cn:'哥德堡监狱历史讲座',place:'Kulturhuset Kåken',summary:'在Kåken文化中心的社区活动',dates:{"2026-05-28": "17:30–18:30"},aid:'4fca812b-ae96-4a54-a09e-c84795d029d7'},
+  {title:'Föreställningar om en urban konst- presentation och stadsvandring',cn:'Bergsjön文化中心活动',place:'Kulturhuset Bergsjön',summary:'在Bergsjön文化中心的社区活动',dates:{"2026-06-03": "10:30–12:30"},aid:'5012a243-2eac-4023-82e8-fac3b23545b7'},
+  {title:'Lunchkonsert: Världens solo och duo',cn:'午间音乐会',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆的音乐演出活动',dates:{"2026-05-28": "12:15–13:00"},aid:'5016b75d-dfce-41a9-b8ee-062a09d93994'},
+  {title:'Melodikrysset',cn:'Askim社区中心活动',place:'Mötesplats Askim',summary:'在Askim社区中心的社区活动',dates:{"2026-05-29": "10:30–12:00"},aid:'50c5ec09-ec9b-43e7-b30f-eb0077e2e389'},
+  {title:'Sagostund på arabiska och svenska - med boktips!',cn:'故事时间',place:'Backa bibliotek',summary:'在Backa图书馆的儿童故事朗读',dates:{"2026-05-28": "15:30–16:15"},aid:'50cc6bc4-5e89-42f9-811b-9aa1e870e4e4'},
+  {title:'Lättgympa i Kortedala',cn:'健身操',place:'Mötesplatser Nordost',summary:'在东北区社区中心的免费健身操课程',dates:{"2026-05-29": "11:00–11:45"},aid:'5132643e-1afc-4422-ad85-e617f49bca32'},
+  {title:'Mindfulness',cn:'正念冥想',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的正念冥想课程',dates:{"2026-05-28": "11:00–11:50"},aid:'515f6760-0397-465e-892b-a9231fea8025'},
+  {title:'Rörelseglädje',cn:'Växthuset温室活动',place:'Växthuset',summary:'在Växthuset温室的社区活动',dates:{"2026-06-03": "11:00–12:00"},aid:'5192ea84-e517-40d8-9d0b-8eaf2e643b99'},
+  {title:'Balansträning',cn:'Kallebäck社区中心活动',place:'Mötesplats Kallebäck',summary:'在Kallebäck社区中心的健身体验',dates:{"2026-06-03": "10:30–11:00"},aid:'53c667ab-ccff-4e6a-b22c-d27cc0e58845'},
+  {title:'Drop-in med kaffe',cn:'jaegerdorff社区中心活动',place:'Mötesplats Jaegerdorff',summary:'在jaegerdorff社区中心的咖啡社交聚会',dates:{"2026-06-02": "11:00–12:00"},aid:'53e5c8c2-d81e-4aa4-b4cc-182d5621ce6c'},
+  {title:'Djurprat',cn:'动物讲座',place:'Slottsskogen',summary:'在Slottsskogen公园的动物互动体验',dates:{"2026-05-29": "", "2026-05-30": "", "2026-05-31": "", "2026-05-28": ""},aid:'54403573-f0dc-46bc-afd0-ba211f85525c'},
+  {title:'Träning med instruktör - i Kvibergs Parks utegym',cn:'教练指导健身',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的健身体验',dates:{"2026-06-01": "12:30–13:30"},aid:'548a688e-47bf-414b-b1fd-7e1f4b89dbce'},
+  {title:'Föreläsning: Gängrekrytering på sociala medier',cn:'Biskopsgården图书馆活动',place:'Biskopsgårdens bibliotek',summary:'在Biskopsgården图书馆的社区活动',dates:{"2026-06-03": "17:30–19:00"},aid:'54faec4f-e02c-4de8-8e05-327e436efdbe'},
+  {title:'Onsdagspyssel',cn:'Hammarkullens biblio活动',place:'Hammarkullens bibliotek',summary:'在Hammarkullens biblio的社区活动',dates:{"2026-06-03": "14:00–17:00"},aid:'55fb92dc-f659-4201-b92a-fa71d28d7d05'},
+  {title:'Ritklubb med Omar',cn:'Opaltorget图书馆活动',place:'Opaltorgets Bibliotek',summary:'在Opaltorget图书馆的社区活动',dates:{"2026-05-29": "15:00–16:00"},aid:'564ae09b-25e6-4452-8647-30a20ac82b74'},
+  {title:'Öppet hus i Angered',cn:'Angered开放日',place:'Mötesplatser Nordost',summary:'在东北区社区中心的开放参观日',dates:{"2026-05-28": "13:00–15:00"},aid:'565c23d4-88b2-4fac-84d2-4e5f992b77dd'},
+  {title:'Fredagsträffen',cn:'kaggeled社区中心活动',place:'Mötesplats Kaggeled',summary:'在kaggeled社区中心的社区活动',dates:{"2026-05-29": "11:30–13:00"},aid:'56cbd0ee-cbaf-4f93-8fda-e7624fc473bb'},
+  {title:'Cirkelträning',cn:'东北区健康中心活动',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的健身体验',dates:{"2026-06-02": "10:30–11:20"},aid:'576cf5fb-9744-497f-bd4f-8d804310d252'},
+  {title:'Lätt styrketräning i Biskopsgården',cn:'Hisingen健康导航活动',place:'Hälsolots Hisingen',summary:'在Hisingen健康导航的健身体验',dates:{"2026-06-02": "11:00–12:00"},aid:'58a6cfb5-5cc5-4646-8b99-80ff7c7a5041'},
+  {title:'Familjetimme',cn:'Angered图书馆活动',place:'Angereds bibliotek',summary:'在Angered图书馆的社区活动',dates:{"2026-05-31": "15:00–16:00"},aid:'5904e2ec-7296-4668-8769-4fe0083dd353'},
+  {title:'Babbla med baby',cn:'Opaltorget图书馆活动',place:'Opaltorgets Bibliotek',summary:'在Opaltorget图书馆的社区活动',dates:{"2026-06-02": "10:30–11:00"},aid:'59a73e96-4f05-4c68-aae4-a38006db3504'},
+  {title:'Gympa',cn:'健身操',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的免费健身操课程',dates:{"2026-05-28": "15:00–15:50"},aid:'5a26a2ed-fb26-44c2-ac72-3fa2b7d2d2a6'},
+  {title:'Familjeföreställning: Trollkarlen från Karelia',cn:'Lagerhuset图书馆活动',place:'Lagerhusets Bibliotek',summary:'在Lagerhuset图书馆的社区活动',dates:{"2026-05-31": "14:00–14:45"},aid:'5ab83e27-7432-4712-b38a-dd092e0a2488'},
+  {title:'Utställning: Får jag vara med?',cn:'展览：Får jag vara med?',place:'Kulturhuset Blå Stället',summary:'在Blå Stället文化中心举办的艺术展览',dates:{"2026-05-29": "", "2026-05-30": "", "2026-05-31": "", "2026-05-28": ""},aid:'5b8209dd-5673-4f8b-8842-04d6e89ad0f7'},
+  {title:'Språkträff',cn:'市立图书馆活动',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆的社区活动',dates:{"2026-06-01": "17:30–19:00"},aid:'5be0f64e-5bb8-4856-8b55-dd358d1de5da'},
+  {title:'Gör egna smycken med Världskulturmuseet',cn:'自制首饰',place:'Mötesplatser Nordost',summary:'在东北区社区中心的文化活动',dates:{"2026-05-28": "12:30–14:30"},aid:'5bf45a9f-8039-4ad0-912f-cae1d8ddbef4'},
+  {title:'Gympa',cn:'健身操',place:'Mötesplats Lunden',summary:'在Lunden社区中心的免费健身操课程',dates:{"2026-05-29": "11:00–11:45"},aid:'5d7a0f5e-8045-4d80-9e7c-093afe2da9ab'},
+  {title:'Promenad i Högsbo',cn:'högsbo社区中心活动',place:'Mötesplats Högsbo',summary:'在högsbo社区中心的社区活动',dates:{"2026-06-03": "11:00–12:00"},aid:'5ddfd4d4-04e0-4f92-ad77-c2019486614f'},
+  {title:'Solvisning på Slottsskogsobservatoriet',cn:'Slottsskogen公园活动',place:'Slottsskogen',summary:'在Slottsskogen公园的社区活动',dates:{"2026-05-31": "14:00–15:00"},aid:'5de58c21-5c54-42d6-ae5b-f4d2e2eaf3c6'},
+  {title:'Lär dig måla indisk warli-konst, 9-12 år',cn:'市立图书馆活动',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆的绘画创作活动',dates:{"2026-05-30": "14:00–14:30"},aid:'5ffbace5-7b99-4e94-b789-6c118c084bf9'},
+  {title:'Ukulele',cn:'尤克里里',place:'Mötesplats Landala Kulturcenter',summary:'在Landala文化中心的社区活动',dates:{"2026-05-28": "11:00–12:30"},aid:'6195c214-7686-4eea-8372-5e8bf49dd42a'},
+  {title:'Utställning: Banats – Nabila Abdul Fattah',cn:'展览：Banats',place:'Kulturhuset Blå Stället',summary:'在Blå Stället文化中心举办的艺术展览',dates:{"2026-05-29": "", "2026-05-30": "", "2026-05-31": "", "2026-05-28": ""},aid:'61a5bd11-f8ef-4631-a86b-f2f5086555dc'},
+  {title:'Vi skapar planeter!',cn:'Opaltorget图书馆活动',place:'Opaltorgets Bibliotek',summary:'在Opaltorget图书馆的社区活动',dates:{"2026-05-31": "10:30–12:30"},aid:'61ec535c-13df-4d64-9fc0-a3e4d4fb799c'},
+  {title:'Gympa',cn:'健身操',place:'Mötesplats Kallebäck',summary:'在Kallebäck社区中心的免费健身操课程',dates:{"2026-06-02": "12:00–12:45"},aid:'6332bb75-c54f-4967-9809-1313900b140d'},
+  {title:'Kom och spela mattcurling med oss!',cn:'来玩游戏',place:'Mötesplats Tuve',summary:'在Tuve社区中心的桌游或棋类活动',dates:{"2026-06-01": "09:30–12:15"},aid:'63507f67-4369-417e-a702-a09dc9214c3b'},
+  {title:'Träning med instruktör - på Länsmansgårdens aktivitetsyta',cn:'教练指导健身',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的健身体验',dates:{"2026-06-03": "16:30–17:30"},aid:'63e6eed6-a081-4ecb-9fea-4a839dbf0f48'},
+  {title:'Utställning: HDK-Valand – Ligger på marken, tittar upp',cn:'展览：HDK-Valand',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆举办的艺术展览',dates:{"2026-05-30": "10:00–20:00"},aid:'63f085b6-3f92-442d-8f6c-a37f0470b90f'},
+  {title:'Skrivworkshop: Börja på din berättelse',cn:'写作工作坊',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆的社区活动',dates:{"2026-05-28": "17:00–19:30"},aid:'63f6cf4c-885d-4f0a-886f-bbd87ba2d4a3'},
+  {title:'Inomhusboule',cn:'法式滚球',place:'Mötesplats S:t Gabriel Tynnered',summary:'在Tynnered社区中心的社区活动',dates:{"2026-06-02": "13:00–14:30"},aid:'642597ff-2e1f-4739-b1d4-5104d8638a2c'},
+  {title:'Allsång',cn:'blidvädersgatan 16 (monsunen)社区中心活动',place:'Mötesplats Blidvädersgatan 16 (Monsunen)',summary:'在blidvädersgatan 16 (monsunen)社区中心的音乐演出活动',dates:{"2026-06-01": "13:00–14:15"},aid:'642ff3fd-a61f-43ce-81b5-3922c316b71e'},
+  {title:'Utställning: Fjärilseffekten',cn:'展览：Fjärilseffekten',place:'Lagerhusets Bibliotek',summary:'在Lagerhuset图书馆举办的艺术展览',dates:{"2026-05-29": "", "2026-05-30": "", "2026-05-31": "", "2026-05-28": ""},aid:'64bf9850-0ced-433e-9733-46dcf9c4e719'},
+  {title:'Spår av liv',cn:'Frölunda文化中心活动',place:'Frölunda Kulturhus',summary:'在Frölunda文化中心的社区活动',dates:{"2026-05-31": "15:00–16:30"},aid:'6501d8aa-a80d-493b-a357-b7d9344b139e'},
+  {title:'Träning för kvinnor i Hammarkullehallen',cn:'Hammarkullen体育馆活动',place:'Hammarkullehallen',summary:'在Hammarkullen体育馆的健身体验',dates:{"2026-06-01": "17:30–18:30"},aid:'651f9d21-e63e-4839-a597-e66017362692'},
+  {title:'Prova på gitarr - för dig född 2016-2007. Plats: Johannebergsskolan.',cn:'吉他体验',place:'Kulturskolan i Göteborg',summary:'在哥德堡文化学校的社区活动',dates:{"2026-05-29": "16:40–18:40"},aid:'65326de1-92f6-43cb-90cd-d74a00048ee6'},
+  {title:'Prova på gitarr - för dig född 2017-2007. Plats: Rosendalsskolan.',cn:'吉他体验',place:'Kulturskolan i Göteborg',summary:'在哥德堡文化学校的社区活动',dates:{"2026-05-29": "15:00–18:00"},aid:'66a2ad91-cd2b-4b10-94fb-93d43864df0b'},
+  {title:'"Heat action day"',cn:'Kortedala图书馆活动',place:'Kortedala bibliotek',summary:'在Kortedala图书馆的社区活动',dates:{"2026-06-02": "15:00–16:00"},aid:'66ff5e6b-ee33-4f0f-9fd7-1bd9a211d847'},
+  {title:'Dart',cn:'飞镖',place:'Mötesplats Kallebäck',summary:'在Kallebäck社区中心的社区活动',dates:{"2026-06-02": "13:30–14:30"},aid:'670b5d5e-0831-4ae6-9188-1722022f9fbd'},
+  {title:'Digitalt stöd',cn:'数字支持服务',place:'Mötesplats Askim',summary:'在Askim社区中心的数字技能支持',dates:{"2026-06-02": "10:00–12:00"},aid:'6716f26a-7c62-465d-ae8e-7ad229a1f1a9'},
+  {title:'Cirkelträning',cn:'东北区健康中心活动',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的健身体验',dates:{"2026-06-03": "09:30–10:15"},aid:'67b707b9-ee9b-42c4-8325-c763c5c86f22'},
+  {title:'Fritidsverksamheten Linden i positivparken',cn:'休闲活动',place:'Fritidsklubben Linden',summary:'在Linden休闲俱乐部的青少年休闲活动',dates:{"2026-06-01": "13:30–17:00"},aid:'67d4163c-7fe2-4b3e-9212-63d5be976b3c'},
+  {title:'Läxhjälp i matte och fysik',cn:'数学辅导',place:'Bergsjöns bibliotek',summary:'在Bergsjön图书馆的免费课业辅导',dates:{"2026-06-01": "16:00–19:00"},aid:'683a6388-7d2a-4f5b-a31e-4a093f6370be'},
+  {title:'Styrka och balans',cn:'力量与平衡训练',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的社区活动',dates:{"2026-05-28": "11:00–11:50"},aid:'687a5e92-437a-4923-b186-5f17f718c886'},
+  {title:'Läxhjälp för barn och unga',cn:'儿童作业辅导',place:'Frölunda bibliotek',summary:'在Frölunda图书馆的免费课业辅导',dates:{"2026-06-01": "16:00–18:00"},aid:'6999b4da-ba1b-452a-90c8-40b63e6f639c'},
+  {title:'Lättgympa',cn:'健身操',place:'Mötesplatser Nordost',summary:'在东北区社区中心的免费健身操课程',dates:{"2026-06-01": "10:00–11:00"},aid:'6b293961-2bcd-48f8-b8f1-98d4c80be429'},
+  {title:'Nordcirkus med cirkus prova-på och ansiktsmålning!',cn:'Flunsåsparken活动',place:'Flunsåsparken',summary:'在Flunsåsparken的社区活动',dates:{"2026-06-03": "13:00–15:00"},aid:'6b6986a9-fce2-4e55-baaa-1e7b6e629359'},
+  {title:'Barnens zoo',cn:'儿童动物园',place:'Slottsskogen',summary:'在Slottsskogen公园的动物互动体验',dates:{"2026-05-29": "", "2026-05-30": "", "2026-05-31": "", "2026-05-28": ""},aid:'6bdbca60-0078-4ed8-9e6f-24305cff8dc3'},
+  {title:'Tipspromenad',cn:'问答散步',place:'Mötesplats Kallebäck',summary:'在Kallebäck社区中心的社区活动',dates:{"2026-06-03": "10:30–11:30"},aid:'6c5cea9a-b241-46c7-b649-3051f9cdbfb6'},
+  {title:'Läslandet i Kulturrummet',cn:'Läsfrämjarinstitutet活动',place:'Läsfrämjarinstitutet (LFI)',summary:'在Läsfrämjarinstitutet的文化活动',dates:{"2026-06-03": "17:00–19:00"},aid:'6d519e5a-38ae-4d00-a17a-9df7f9d05f63'},
+  {title:'Dans för kvinnor i Hammarkullehallen',cn:'Hammarkullen体育馆活动',place:'Hammarkullehallen',summary:'在Hammarkullen体育馆的舞蹈课程',dates:{"2026-06-03": "17:30–18:30"},aid:'6daf7f75-aaaa-483f-ad66-45a89e24ca75'},
+  {title:'Lunchlyrik',cn:'午间诗歌',place:'Mötesplats Landala Kulturcenter',summary:'在Landala文化中心的社区活动',dates:{"2026-05-29": "", "2026-05-30": "", "2026-05-31": "", "2026-05-28": ""},aid:'6de5c2cf-581b-4754-b846-9a40d0f51a20'},
+  {title:'Keramik med kulturskolan -drop in (9-19 år)',cn:'陶艺活动',place:'](/wps/portal/kalendarium/kalendarium-start?activityId=6e06b2e6-bae0-4347-8adb-addd409dddf3)Kulturhuset Bergsjön',summary:'在Bergsjön文化中心的陶艺创作体验',dates:{"2026-05-28": "14:45–16:00"},aid:'6e06b2e6-bae0-4347-8adb-addd409dddf3'},
+  {title:'Dansa loss!',cn:'Landala文化中心活动',place:'Mötesplats Landala Kulturcenter',summary:'在Landala文化中心的舞蹈课程',dates:{"2026-05-29": "13:00–14:00"},aid:'6e2ef61a-3586-4d58-919e-c22ad1d3fed6'},
+  {title:'Re-Pehr-era: Lappa och laga!',cn:'缝补工作坊',place:'Mötesplats Landala Kulturcenter',summary:'在Landala文化中心的社区活动',dates:{"2026-05-29": "", "2026-05-30": "", "2026-05-31": "", "2026-05-28": ""},aid:'6e39aaeb-6b93-455c-8de7-461fd3e3767d'},
+  {title:'Keramik med Kulturskolan - drop in (6-8 år med vuxen)',cn:'陶艺活动',place:'](/wps/portal/kalendarium/kalendarium-start?activityId=6ea51677-cf5b-406f-81c2-4441f9465bec)Kulturhuset Bergsjön',summary:'在Bergsjön文化中心的陶艺创作体验',dates:{"2026-05-29": "14:30–15:30"},aid:'6ea51677-cf5b-406f-81c2-4441f9465bec'},
+  {title:'Styrka och balans',cn:'力量与平衡训练',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的社区活动',dates:{"2026-06-01": "11:00–11:50"},aid:'6eb9a401-1ee5-4027-9d2e-a1586d37342b'},
+  {title:'Pingis',cn:'乒乓球',place:'Mötesplats Kallebäck',summary:'在Kallebäck社区中心的社区活动',dates:{"2026-05-29": "13:00–15:00"},aid:'6f0ee2e6-05cc-47c4-ac86-64e2c73e7127'},
+  {title:'Drop-in på Mötesplats Myntet',cn:'Myntet社区中心活动',place:'Mötesplats Myntet',summary:'在Myntet社区中心的社区活动',dates:{"2026-05-29": "16:00–20:00"},aid:'6f1231f9-0dea-464a-a746-a6eefe492023'},
+  {title:'Titta boken!',cn:'Angered图书馆活动',place:'Angereds bibliotek',summary:'在Angered图书馆的社区活动',dates:{"2026-06-01": "11:00–11:30"},aid:'6f318f50-6624-47c0-bc79-82a9c1d70468'},
+  {title:'Handarbetscafé',cn:'手工咖啡馆',place:'Mötesplats Stenhuset',summary:'在Stenhuset社区中心的手工制作活动',dates:{"2026-05-28": "12:00–14:00"},aid:'6fa92b03-313e-4831-9d54-523281fe5a5b'},
+  {title:'Gör egna smycken med Världskulturmuseet - Bergsjön',cn:'自制首饰',place:'Mötesplatser Nordost',summary:'在东北区社区中心的文化活动',dates:{"2026-05-28": "12:30–14:30"},aid:'70055154-bc92-435d-9bd4-1bb887c4e6ab'},
+  {title:'Sagofredag',cn:'Frölunda图书馆活动',place:'Frölunda bibliotek',summary:'在Frölunda图书馆的儿童故事朗读',dates:{"2026-05-29": "14:00–14:30"},aid:'70447a12-c194-49b5-afdb-ffd5b47d3c37'},
+  {title:'Boka 40 minuter digitalt stöd',cn:'数字支持服务',place:'Mötesplats Backa',summary:'在Backa社区中心的数字技能支持',dates:{"2026-05-28": "13:00–14:30"},aid:'7050bb6a-9bb5-4998-b743-c79c868889c5'},
+  {title:'Engelsk konversation',cn:'英语会话',place:'Mötesplats Landala Kulturcenter',summary:'在Landala文化中心练习英语会话',dates:{"2026-05-28": "11:00–13:00"},aid:'70f1fb39-b13f-4287-86e5-9f0667d1a75d'},
+  {title:'Hantverkskväll på Bygglekplatsen',cn:'手工之夜',place:'Bygglekplatsen i Biskopsgården',summary:'在Biskopsgården建筑乐园的手工制作活动',dates:{"2026-05-28": "17:30–19:00"},aid:'7140e96a-2594-4641-8caa-ca3349b95de1'},
+  {title:'Gympa för kvinnor',cn:'女性健身操',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的免费健身操课程',dates:{"2026-05-28": "11:00–11:50"},aid:'71440718-22f7-4e5f-a64b-d673021472cf'},
+  {title:'Gratis träning för dig med bebis i Flunsåsparken',cn:'体育与协会管理局活动',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的免费健身体验',dates:{"2026-06-03": "10:30–11:15"},aid:'715a8ed9-9dac-4fac-ae45-0efbf898a6b5'},
+  {title:'Berättelsen om den mystiska skogen',cn:'Guldhedens bibliotek活动',place:'Guldhedens bibliotek',summary:'在Guldhedens bibliotek的社区活动',dates:{"2026-05-30": "11:00–11:30"},aid:'7172401e-e754-42ca-a4e2-b2ffb2260d38'},
+  {title:'Träffa personligt ombud!',cn:'Medborgarkontoret Fr活动',place:'Medborgarkontoret Frölunda',summary:'在Medborgarkontoret Fr的社区活动',dates:{"2026-06-01": "13:00–14:30"},aid:'719ac109-7240-4471-bb01-cd3e69299c6a'},
+  {title:'Kreativt skrivande \\\\* Föranmälan',cn:'创意写作',place:'Mötesplats Verket',summary:'在Verket社区中心的社区活动',dates:{"2026-05-28": "13:00–15:00"},aid:'71c691ac-d7ec-44c1-8275-1b9cdf32b690'},
+  {title:'Gratis yoga för tjejer och kvinnor, Vättlefjälls motionscentrum',cn:'免费瑜伽',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的免费瑜伽课程',dates:{"2026-06-02": "17:00–17:45"},aid:'72142b21-7657-4e94-9145-1527f85e2d81'},
+  {title:'Schack',cn:'国际象棋',place:'Mötesplats Landala Kulturcenter',summary:'在Landala文化中心的桌游或棋类活动',dates:{"2026-06-03": "13:00–16:00"},aid:'7246cbd6-ec4b-4e70-8783-e15af502775a'},
+  {title:'Gaming på Kulturrummet',cn:'Gårdsten文化空间活动',place:'Kulturrummet Gårdsten',summary:'在Gårdsten文化空间的文化活动',dates:{"2026-06-02": "14:00–16:00"},aid:'72977b37-f35e-48cd-89a9-58a00e5bd6fd'},
+  {title:'Shared reading vid Lärjeån (OBS Nytt datum!)',cn:'Angered图书馆活动',place:'](/wps/portal/kalendarium/kalendarium-start?activityId=73ae3519-526b-44b7-87da-65476c3e13b7)Angereds bibliotek',summary:'在Angered图书馆的社区活动',dates:{"2026-06-02": "10:00–12:00"},aid:'73ae3519-526b-44b7-87da-65476c3e13b7'},
+  {title:'Öppen ateljé',cn:'开放画室',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆的绘画创作活动',dates:{"2026-06-03": "16:00–18:00"},aid:'74107cda-f4bc-4e11-9f10-dac7d258cab8'},
+  {title:'Garn och textil - vi lär av varandra',cn:'Community center Bru活动',place:'Community center Brunnsbo',summary:'在Community center Bru的社区活动',dates:{"2026-06-01": "14:00–16:00"},aid:'746d934a-f142-4dd2-ace5-b5fb77292521'},
+  {title:'Pingis för alla åldrar',cn:'乒乓球',place:'Axelhuset',summary:'在Axelhuset的社区活动',dates:{"2026-06-01": "14:00–16:00"},aid:'74924ab8-82dc-4b03-aabd-090f991dc7df'},
+  {title:'Digital handledning på biblioteket!',cn:'数字指导',place:'Högsbo bibliotek',summary:'在Högsbo图书馆的图书馆活动',dates:{"2026-06-02": "10:00–12:00"},aid:'7514fed0-fd41-4ba8-8214-4175df8cf9b4'},
+  {title:'Läsecirkel på spanska',cn:'西班牙语读书会',place:'Majornas bibliotek',summary:'在Majorna图书馆的社区活动',dates:{"2026-05-28": "17:15–18:45"},aid:'75a3cc86-6af7-4aa0-b49f-8e0e1dc5652a'},
+  {title:'After School',cn:'Lundby图书馆活动',place:'Lundby bibliotek',summary:'在Lundby图书馆的社区活动',dates:{"2026-06-02": "15:00–16:00"},aid:'75ae7429-79bb-4878-8334-f9523e2bfb70'},
+  {title:'Gympa på Selma Lagerlöfs torg, MårBacka',cn:'健身操',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的免费健身操课程',dates:{"2026-06-02": "13:30–14:30"},aid:'767517aa-3f6f-4cd3-95b7-20334d00d9ac'},
+  {title:'Drop in med kaffe',cn:'长者咖啡聚会',place:'Mötesplats Sandarna',summary:'在Sandarna社区中心的咖啡社交聚会',dates:{"2026-06-01": "13:00–14:00"},aid:'76a3ecc8-a2b8-4cbf-90ee-b1c1e3392436'},
+  {title:'Virka med Hana',cn:'Biskopsgården图书馆活动',place:'Biskopsgårdens bibliotek',summary:'在Biskopsgården图书馆的社区活动',dates:{"2026-05-30": "13:00–15:15"},aid:'77e0bacf-9590-4319-929a-39d273ee0e44'},
+  {title:'Familjeträning i Guldheden',cn:'家庭训练',place:'Socialförvaltningen Centrum',summary:'在Socialförvaltningen 的健身体验',dates:{"2026-06-03": "17:00–18:00"},aid:'785ef80b-6965-4ac0-af97-09bca50e8b0d'},
+  {title:'Mindfulness i skogen på lätt svenska',cn:'森林正念',place:'Hälsolots Hisingen',summary:'在Hisingen健康导航的正念冥想课程',dates:{"2026-05-28": "14:00–15:15"},aid:'78f151a6-9f1b-4fc8-8395-d03d311fe7f1'},
+  {title:'Pliktaklubben v. 22',cn:'Plikta俱乐部',place:'Plikta Aktivitetspark',summary:'在Plikta活动公园的社区活动',dates:{"2026-05-28": ""},aid:'79573d7d-1eeb-4543-9cc5-8fba251b0262'},
+  {title:'Yin yoga',cn:'东北区健康中心活动',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的免费瑜伽课程',dates:{"2026-06-02": "13:30–14:30"},aid:'79bf671d-066a-4f68-b041-81d6b716c981'},
+  {title:'Ukulelekurs',cn:'尤克里里',place:'Mötesplats Backa',summary:'在Backa社区中心的社区活动',dates:{"2026-06-02": "10:00–11:30"},aid:'79ca7034-7246-4dff-adcf-a25b3f08c79d'},
+  {title:'Umgås och handarbete',cn:'Kyrkbytorget社区中心活动',place:'Mötesplats Kyrkbytorget 6',summary:'在Kyrkbytorget社区中心的手工制作活动',dates:{"2026-06-01": "12:30–14:30"},aid:'79e7e3ec-085b-463b-914b-f8ba119c2d2d'},
+  {title:'Utställning: Djetinjstvo u ratu: crteži iz Srebrenice/Barndom i krig: teckningar från Srebrenica',cn:'展览：Djetinjstvo u ratu: ',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆举办的艺术展览',dates:{"2026-05-31": "08:00–20:00"},aid:'79fa03b2-12ef-4c9f-be8e-b2b64a74b9e0'},
+  {title:'Qigong',cn:'气功训练',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的社区活动',dates:{"2026-06-03": "11:00–11:50"},aid:'7a59a117-66aa-4244-b8f0-f0371bed8ea6'},
+  {title:'Träning för kvinnor i Frölunda Kulturhus, lilla sporthallen',cn:'体育与协会管理局活动',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的健身体验',dates:{"2026-06-03": "10:00–11:00"},aid:'7adbc0c5-ddcd-4325-b7a3-c0a1cba23066'},
+  {title:'Kvinnoklubben',cn:'Bergkristall公园活动',place:'Mötesplats Bergkristallparken Tynnered',summary:'在Bergkristall公园的社区活动',dates:{"2026-06-03": "10:00–12:00"},aid:'7b19a609-b999-400a-8c4c-542d6006f0a8'},
+  {title:'Sagostund',cn:'故事时间',place:'Askims bibliotek',summary:'在Askim图书馆的儿童故事朗读',dates:{"2026-06-02": "11:00–11:30"},aid:'7b28cb86-0737-4ae2-a578-098f1d9692aa'},
+  {title:'Måndagshäng',cn:'Hjällbo bibliotek活动',place:'Hjällbo bibliotek',summary:'在Hjällbo bibliotek的社区活动',dates:{"2026-06-01": "15:30–18:30"},aid:'7be119d3-94ca-4a94-8625-6522232f67cf'},
+  {title:'Gåfotboll lätt',cn:'足球活动',place:'Växthuset',summary:'在Växthuset温室的足球活动',dates:{"2026-06-01": "09:00–10:00"},aid:'7c2b98dc-9d57-4745-9b6d-54d980728517'},
+  {title:'Bokstund för små',cn:'Lagerhuset图书馆活动',place:'Lagerhusets Bibliotek',summary:'在Lagerhuset图书馆的社区活动',dates:{"2026-06-02": "13:30–14:15"},aid:'7d249496-a9cc-4b4e-8049-9cd196c9b8ff'},
+  {title:'Fredagskul',cn:'Torslanda图书馆活动',place:'Torslanda bibliotek',summary:'在Torslanda图书馆的社区活动',dates:{"2026-05-29": "12:00–16:45"},aid:'7d43dc0f-ec1d-49b7-8eb6-6178042717d7'},
+  {title:'Öppet gym (gymintro kl 14)',cn:'开放健身房',place:'](/wps/portal/kalendarium/kalendarium-start?activityId=7d488447-aa35-4879-b91e-550e820afe78)Hälsoteket i Nordost',summary:'在东北区健康中心的社区活动',dates:{"2026-05-28": "13:30–15:30"},aid:'7d488447-aa35-4879-b91e-550e820afe78'},
+  {title:'Torsdagsträffen - en träff för den sociala själen',cn:'周四社交聚会',place:'Mötesplats Backa',summary:'在Backa社区中心的社区活动',dates:{"2026-05-28": "13:30–14:30"},aid:'7dda9aed-c626-42cf-904a-93f1b70581bf'},
+  {title:'Öppet gym Vättlefjälls motionscentrum',cn:'开放健身房',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的社区活动',dates:{"2026-05-30": "11:00–13:00"},aid:'7ea6de32-7921-4d22-820a-454af2e56430'},
+  {title:'Träning med instruktör- i Gårdstensdalens utegym',cn:'教练指导健身',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的健身体验',dates:{"2026-05-29": "10:00–11:00"},aid:'7ea89c08-7c59-4bff-9b96-204ed0320d69'},
+  {title:'Frågesport',cn:'问答比赛',place:'Mötesplats Lillekärr Södra 55 (fd mötesplats Kärra)',summary:'在Lillekärr社区中心的社区活动',dates:{"2026-05-28": "13:00–14:30"},aid:'7ebe58e0-c755-4a3c-8999-98bfb91c78e5'},
+  {title:'Musik ska byggas utav glädje!',cn:'Verket社区中心活动',place:'Mötesplats Verket',summary:'在Verket社区中心的音乐演出活动',dates:{"2026-06-03": "12:30–14:45"},aid:'7ef75fa8-bdf5-4dc0-8f1d-9adf2c5c39aa'},
+  {title:'Engelskt språkcafé',cn:'语言咖啡馆（Kyrkbyn图书馆）',place:'Kyrkbyns bibliotek',summary:'在Kyrkbyn图书馆练习瑞典语会话',dates:{"2026-06-03": "13:00–14:00"},aid:'7f206157-7870-4a42-9c1c-797777143649'},
+  {title:'The Sci Club',cn:'Bergsjön文化中心活动',place:'Kulturhuset Bergsjön',summary:'在Bergsjön文化中心的社区活动',dates:{"2026-05-30": "14:00–15:00"},aid:'7f80ee11-9d47-48c0-a474-6a7564869a3b'},
+  {title:'COSPLAYFIKA PÅ VERKET',cn:'Verket - en plats fö活动',place:'Verket - en plats för kreativitet och möten',summary:'在Verket - en plats fö的社区活动',dates:{"2026-05-31": "14:00–17:00"},aid:'7f9cd7f7-ffa5-49e9-8187-86b0f7456d14'},
+  {title:'Babbla med baby',cn:'Opaltorget图书馆活动',place:'Opaltorgets Bibliotek',summary:'在Opaltorget图书馆的社区活动',dates:{"2026-06-02": "13:30–14:00"},aid:'7fea145a-95c3-46e9-8eff-259070e51fcf'},
+  {title:'Studiestöd på Bergsgårdsskolan för årskurs 6',cn:'学校运动场活动',place:'Skola som arena',summary:'在学校运动场的社区活动',dates:{"2026-06-01": "15:00–17:30"},aid:'8064ed1f-340f-4585-a03c-86e22a8a8d5c'},
+  {title:'Solikyl - minska matsvinnet',cn:'Community center Bru活动',place:'Community center Brunnsbo',summary:'在Community center Bru的社区活动',dates:{"2026-06-01": "18:30–19:30"},aid:'85513923-e9bb-43dc-a4dc-0a20389cc569'},
+  {title:'Kamratfredag med IFK Göteborg - Hammarkullen',cn:'IFK Göteborg活动',place:'IFK Göteborg',summary:'在IFK Göteborg的社区活动',dates:{"2026-05-29": "19:00–22:00"},aid:'85b2c0f1-a7d4-48d9-9fde-83794bbc7d7d'},
+  {title:'Kurs i ACT - Att hantera stress och främja hälsa',cn:'东北区健康中心活动',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的社区活动',dates:{"2026-06-02": "13:00–15:00"},aid:'86807f19-7a95-4755-a73c-a8f9f63d814f'},
+  {title:'Läxhjälp för alla åldrar',cn:'作业辅导',place:'Bergsjöns bibliotek',summary:'在Bergsjön图书馆的免费课业辅导',dates:{"2026-06-02": "17:00–19:00"},aid:'87358414-1645-46f4-8a37-9859bd3b0e7c'},
+  {title:'Skogsbad på lätt svenska',cn:'森林浴',place:'Backa bibliotek',summary:'在Backa图书馆的社区活动',dates:{"2026-05-28": "13:50–15:15"},aid:'877035a2-915c-437e-90e8-0ecdaf0b5fcd'},
+  {title:'Öppet hus på Regnbågshuset',cn:'彩虹之家开放日',place:'Regnbågshuset',summary:'在彩虹之家的开放参观日',dates:{"2026-06-02": "15:00–18:00"},aid:'8812cf65-9b58-4608-8ea0-1a6e138bdd24'},
+  {title:'Begreppens aktualitet - Margareta av Navarra, psykoanalysen och kärlekens begrepp',cn:'市立图书馆活动',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆的手工制作活动',dates:{"2026-06-01": "18:00–19:30"},aid:'886aeaae-2028-4e5e-a5f0-92ece0174b40'},
+  {title:'Sittande yoga - Kortedala',cn:'东北区社区中心活动',place:'Mötesplatser Nordost',summary:'在东北区社区中心的免费瑜伽课程',dates:{"2026-06-01": "11:30–12:15"},aid:'8a52f159-7484-4650-8c60-329238c66ca0'},
+  {title:'Sminkkurs för  skrynkliga ögonlock',cn:'Askim社区中心活动',place:'Mötesplats Askim',summary:'在Askim社区中心的社区活动',dates:{"2026-06-03": "10:30–12:30"},aid:'8a8c4135-f9b2-4cc2-8542-dea476ecbc9c'},
+  {title:'Digitala torsdagar',cn:'数字星期四',place:'Kyrkbyns bibliotek',summary:'在Kyrkbyn图书馆的数字技能支持',dates:{"2026-05-28": "14:00–15:00"},aid:'8a9e37e0-db25-4224-9b0b-c79ce1e65487'},
+  {title:'Spela bingo tillsammans!',cn:'宾果游戏',place:'Mötesplats Askim',summary:'在Askim社区中心的社交宾果游戏',dates:{"2026-06-02": "11:00–11:45"},aid:'8afb14a1-8abd-4285-9752-5f2ca58cfda4'},
+  {title:'Social gemenskap med volontär på mötesplats Tuve',cn:'社交聚会',place:'Mötesplats Tuve',summary:'在Tuve社区中心的社区活动',dates:{"2026-06-01": "10:00–13:00"},aid:'8b3445e4-589b-480e-9d14-1cf7742631e4'},
+  {title:'Frågesport',cn:'问答比赛',place:'Mötesplats Sandarna',summary:'在Sandarna社区中心的社区活动',dates:{"2026-05-28": "13:00–14:30"},aid:'8b51a910-a7cf-40ee-83cc-13c4c9046437'},
+  {title:'Träning med instruktör - i Ruddalens utegym',cn:'教练指导健身',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的健身体验',dates:{"2026-06-01": "17:00–18:00"},aid:'8b9f708e-02b4-4cd9-b11c-e53510b72b2a'},
+  {title:'Vattengympa för kvinnor',cn:'女性健身操',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的免费健身操课程',dates:{"2026-05-29": "14:00–14:50"},aid:'8ba51453-ba2e-4e2f-850d-637fe53301f3'},
+  {title:'Öppet hus på Regnbågshuset',cn:'彩虹之家开放日',place:'Regnbågshuset',summary:'在彩虹之家的开放参观日',dates:{"2026-05-28": "13:30–16:30"},aid:'8bb858af-cfcf-42a5-b44d-c271789398a1'},
+  {title:'Origami-klubben',cn:'Opaltorget图书馆活动',place:'Opaltorgets Bibliotek',summary:'在Opaltorget图书馆的社区活动',dates:{"2026-05-29": "16:00–16:45"},aid:'8c07457b-e6c3-425a-9a06-33278f15450d'},
+  {title:'Atom Studios',cn:'Atom录音室活动',place:'Atom Studios',summary:'在Atom录音室的社区活动',dates:{"2026-05-28": "16:00–21:00"},aid:'8c9b4fc0-4856-4c8d-8a3b-fa5c787ca6c2'},
+  {title:'Kom och spela!',cn:'来玩游戏',place:'Opaltorgets Bibliotek',summary:'在Opaltorget图书馆的桌游或棋类活动',dates:{"2026-05-28": "15:00–16:00"},aid:'8cac426d-4a5a-40bb-9541-533c6de93b4c'},
+  {title:'Pyssla, lek och läs med bibliotekets unga läsambassadörer',cn:'Frölunda图书馆活动',place:'Frölunda bibliotek',summary:'在Frölunda图书馆的图书馆活动',dates:{"2026-06-01": "16:00–17:00"},aid:'8ccf149d-467a-4a47-b8c0-74a170430210'},
+  {title:'Sinnesrummet Molnet onsdag',cn:'Eldorado Resurscente活动',place:'Eldorado Resurscenter',summary:'在Eldorado Resurscente的社区活动',dates:{"2026-06-03": "10:30–15:30"},aid:'8cd64353-ab6e-4525-8be8-cb02553b7941'},
+  {title:'Träning med instruktör - på Blidväders aktivitetsyta',cn:'教练指导健身',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的健身体验',dates:{"2026-06-02": "16:00–17:00"},aid:'8cf117f9-678f-4d4c-8d41-12e3ad2b5d1f'},
+  {title:'Manusskolan',cn:'编剧学校',place:'Kulturskolan i Göteborg',summary:'在哥德堡文化学校的社区活动',dates:{"2026-05-28": "16:00–19:00"},aid:'8dc6c50e-1440-498f-817b-5bb576b29d14'},
+  {title:'Kinesisk hälsogymnastik',cn:'Landala文化中心活动',place:'Mötesplats Landala Kulturcenter',summary:'在Landala文化中心的社区活动',dates:{"2026-06-02": "10:00–10:45"},aid:'8e6b1d3b-80c2-4cfd-8443-fac04df7fd4f'},
+  {title:'Berättelser på somaliska',cn:'索马里语故事',place:'Friskväderstorgets bibliotek',summary:'在Friskväderstorget图书馆的社区活动',dates:{"2026-05-28": "15:00–16:00"},aid:'8fa26176-8ec9-494f-91ed-afdb731604f9'},
+  {title:'Irländsk lunchkonsert med världsmusikbandet Wildflower',cn:'午间音乐会',place:'Mötesplats Bergkristallparken Tynnered',summary:'在Bergkristall公园的音乐演出活动',dates:{"2026-05-29": "11:00–12:00"},aid:'8fb99b46-18c8-47e9-94ef-3768d0d9eef9'},
+  {title:'Mattcurling',cn:'Kallebäck社区中心活动',place:'Mötesplats Kallebäck',summary:'在Kallebäck社区中心的社区活动',dates:{"2026-05-29": "13:00–14:00"},aid:'8fd404cd-3b2b-458c-9729-de45fde08f0f'},
+  {title:'Bebismåleri',cn:'Kåken文化中心活动',place:'Kulturhuset Kåken',summary:'在Kåken文化中心的社区活动',dates:{"2026-06-03": "13:00–15:00"},aid:'9029de03-9024-493d-955b-2d3b26d55e8c'},
+  {title:'Frågesport Röda Tråden',cn:'问答比赛',place:'Mötesplats Bergkristallparken Tynnered',summary:'在Bergkristall公园的社区活动',dates:{"2026-05-29": "11:45–13:00"},aid:'907808a1-5dee-4213-b186-ac88b6a02a27'},
+  {title:'Gratis familjeträning Lundbybadet',cn:'免费家庭健身',place:'Lundbybadet',summary:'在Lundby游泳馆的免费健身体验',dates:{"2026-05-28": "16:00–16:45"},aid:'908b90b6-31a1-480d-84fb-86dbe22badc3'},
+  {title:'Fredagsfest med Passalen',cn:'Verket - en plats fö活动',place:'Verket - en plats för kreativitet och möten',summary:'在Verket - en plats fö的社区活动',dates:{"2026-05-29": "18:30–20:30"},aid:'908bcea6-c2ee-428b-be88-b645aee74b0e'},
+  {title:'Bli smartare med din smarttelefon',cn:'智能手机入门',place:'Fixartjänst Hisingen',summary:'在Hisingen维修服务的社区活动',dates:{"2026-05-28": "13:30–15:30"},aid:'90ad0ee7-7653-4542-b096-42e3ca17107e'},
+  {title:'Filmfabriken Göteborg',cn:'Landala文化中心活动',place:'Mötesplats Landala Kulturcenter',summary:'在Landala文化中心的社区活动',dates:{"2026-06-01": "15:00–19:00"},aid:'91949668-1d64-40e6-ab17-e5388cffd456'},
+  {title:'Småkul i positivparken- sångstund',cn:'Positivet i Positivp活动',place:'Positivet i Positivparken',summary:'在Positivet i Positivp的音乐演出活动',dates:{"2026-05-29": "11:00–11:20"},aid:'91ddd03d-5ae1-4e9f-b586-6d783d17e643'},
+  {title:'Pingis för alla åldrar',cn:'乒乓球',place:'Axelhuset',summary:'在Axelhuset的社区活动',dates:{"2026-05-29": "14:00–16:00"},aid:'9327bb7a-32d5-49e6-afaa-ae3a573f1fe0'},
+  {title:'Fredagsdjuret på plikta',cn:'Plikta活动公园活动',place:'Plikta Aktivitetspark',summary:'在Plikta活动公园的动物互动体验',dates:{"2026-05-29": "10:30–12:00"},aid:'934a02ed-a313-48cc-832b-4987d4039f19'},
+  {title:'Sagostund på vietnamesiska',cn:'故事时间',place:'Frölunda bibliotek',summary:'在Frölunda图书馆的儿童故事朗读',dates:{"2026-05-30": "14:00–15:00"},aid:'93c37dcc-9a2f-4724-8934-6390bd7041a8'},
+  {title:'Träning med instruktör - i Siriusgatans utegym',cn:'教练指导健身',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的健身体验',dates:{"2026-06-03": "10:00–11:00"},aid:'93e577e7-7c4f-4304-9065-e99d69205840'},
+  {title:'Rollspel 101 på Kåken',cn:'角色扮演入门',place:'Kulturhuset Kåken',summary:'在Kåken文化中心的桌游或棋类活动',dates:{"2026-05-28": "17:00–21:00"},aid:'94031b49-a192-4246-8132-469c804fcb3d'},
+  {title:'Drop-in på Mötesplats Myntet',cn:'Myntet社区中心活动',place:'Mötesplats Myntet',summary:'在Myntet社区中心的社区活动',dates:{"2026-06-03": "16:00–20:00"},aid:'94fd2f0a-2bde-422b-8d4a-8dc9f9d20698'},
+  {title:'Allsång',cn:'Bergkristall公园活动',place:'Mötesplats Bergkristallparken Tynnered',summary:'在Bergkristall公园的音乐演出活动',dates:{"2026-05-29": "11:00–11:45"},aid:'950a0d56-4621-4636-a306-265585e22ff0'},
+  {title:'West Pride: Politikerutfrågning & försnack',cn:'市立图书馆活动',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆的社区活动',dates:{"2026-06-01": "17:00–19:30"},aid:'96fb7c58-44cb-41d6-bf79-ebd2d0e1290d'},
+  {title:'Månadens utställning',cn:'展览',place:'Kortedala bibliotek',summary:'在Kortedala图书馆举办的艺术展览',dates:{"2026-05-29": "", "2026-05-30": "", "2026-05-31": "", "2026-05-28": ""},aid:'9745862b-3345-4cb1-a0f5-e368e6635ce1'},
+  {title:'Prat & promenad med Peer Support',cn:'Guldhedens bibliotek活动',place:'Guldhedens bibliotek',summary:'在Guldhedens bibliotek的社区活动',dates:{"2026-05-29": "13:30–14:45"},aid:'982186b1-9096-4ff9-b9c6-161da36fc5f8'},
+  {title:'Öppen segling, kanot och SUP i Jubileumsparken',cn:'Jubileumsparken活动',place:'Jubileumsparken',summary:'在Jubileumsparken的社区活动',dates:{"2026-05-30": "12:30–16:00"},aid:'98863073-3edc-4bbd-923c-73e886fae80b'},
+  {title:'Inomhusboule',cn:'法式滚球',place:'Mötesplats S:t Gabriel Tynnered',summary:'在Tynnered社区中心的社区活动',dates:{"2026-05-28": "13:00–14:30"},aid:'9910d4a9-8d80-48fe-9826-0220b76f28d8'},
+  {title:'Talbokscirkel',cn:'Kåken文化中心活动',place:'Kulturhuset Kåken',summary:'在Kåken文化中心的社区活动',dates:{"2026-06-02": "13:30–14:30"},aid:'99781883-67df-4894-a990-ed84a8fd36ee'},
+  {title:'Kortspel: Canasta',cn:'Verket社区中心活动',place:'Mötesplats Verket',summary:'在Verket社区中心的桌游或棋类活动',dates:{"2026-06-03": "10:30–13:30"},aid:'997862d1-3c8c-4d80-bb57-c8b2c952742d'},
+  {title:'Gratis träning för kvinnor, Sandeklevshallen',cn:'女性免费健身',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的免费健身体验',dates:{"2026-05-28": "17:00–17:45"},aid:'99dab140-9795-48ee-a7fd-070dd1e2f6a7'},
+  {title:'Fäktning i Nordstan',cn:'Allez Fäktförening活动',place:'Allez Fäktförening',summary:'在Allez Fäktförening的社区活动',dates:{"2026-05-30": "11:00–15:00"},aid:'9a48ab76-8b17-4b74-b4c7-f108a926c7ba'},
+  {title:'Ponnyridning på Barnens zoo',cn:'小马骑行',place:'Slottsskogen',summary:'在Slottsskogen公园的动物互动体验',dates:{"2026-06-03": "10:00–16:00"},aid:'9a4ae807-f89e-4a0c-89b0-090b732f6cea'},
+  {title:'Tysk konversation',cn:'Landala文化中心活动',place:'Mötesplats Landala Kulturcenter',summary:'在Landala文化中心练习语言会话',dates:{"2026-06-03": "11:00–14:30"},aid:'9a4bba0f-4731-4a22-80b8-e4421f9428e3'},
+  {title:'Läxhjälp SFI/SVA',cn:'SFI作业辅导',place:'Frölunda bibliotek',summary:'在Frölunda图书馆的免费课业辅导',dates:{"2026-05-28": "15:00–16:30"},aid:'9aae0187-ff90-4abf-9ae1-e5c5ebb7a493'},
+  {title:'Läxhjälp för barn och unga',cn:'儿童作业辅导',place:'Frölunda bibliotek',summary:'在Frölunda图书馆的免费课业辅导',dates:{"2026-06-03": "16:00–18:00"},aid:'9b1ec64b-6cc2-432e-b579-3ce43b51a54a'},
+  {title:'Vill du spela schack?',cn:'国际象棋',place:'Mötesplats Lillekärr Södra 55 (fd mötesplats Kärra)',summary:'在Lillekärr社区中心的桌游或棋类活动',dates:{"2026-06-02": "10:00–11:30"},aid:'9b4a7865-c56f-4223-94c3-8d3fb1a3c85b'},
+  {title:'Öppen ateljé för seniorer',cn:'开放画室',place:'Kulturhuset Kåken',summary:'在Kåken文化中心的绘画创作活动',dates:{"2026-05-28": "10:00–12:00"},aid:'9ba42abf-6262-4ff4-93c2-49bafac1aa47'},
+  {title:'Yoga',cn:'东北区健康中心活动',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的免费瑜伽课程',dates:{"2026-05-29": "13:30–14:20"},aid:'9bd85681-352a-4cad-ad72-0763c50926b3'},
+  {title:'Nyfiken på hur naturen kan vara till nytta för dig som anhörig',cn:'Anhörigstöd för dig 活动',place:'Anhörigstöd för dig som stödjer en person över 65 år, stadsområde Hisingen',summary:'在Anhörigstöd för dig 的社区活动',dates:{"2026-06-02": "11:00–13:30"},aid:'9c3aa74d-6679-448c-b888-e8e0d1ec80fa'},
+  {title:'Träna på Gym på Lundbybadet',cn:'Hisingen健康导航活动',place:'Hälsolots Hisingen',summary:'在Hisingen健康导航的社区活动',dates:{"2026-06-02": "13:00–14:00"},aid:'9c60a9f5-8012-43d4-96bd-f89ad6b1b749'},
+  {title:'Schack – spela mot varandra!',cn:'国际象棋',place:'Kulturhuset Kåken',summary:'在Kåken文化中心的桌游或棋类活动',dates:{"2026-05-30": "13:00–15:00"},aid:'9c64c9b1-1244-4e12-b377-a7edd94cabd0'},
+  {title:'Ponnyridning på Barnens zoo',cn:'小马骑行',place:'Slottsskogen',summary:'在Slottsskogen公园的动物互动体验',dates:{"2026-05-31": "10:00–12:30"},aid:'9c716191-f7fd-4583-b0d0-87d9d8df6aa6'},
+  {title:'Kinesisk hälsogymnastik',cn:'Landala文化中心活动',place:'Mötesplats Landala Kulturcenter',summary:'在Landala文化中心的社区活动',dates:{"2026-05-29": "10:00–10:45"},aid:'9c7f66cb-31cc-4c51-9065-0bd4067c36d6'},
+  {title:'Historiegrupperna',cn:'Landala文化中心活动',place:'Mötesplats Landala Kulturcenter',summary:'在Landala文化中心的社区活动',dates:{"2026-06-02": "11:00–15:00"},aid:'9ca8e8b1-3c76-4d11-b408-ab2b2267fa3f'},
+  {title:'Öppet hus i Angered',cn:'Angered开放日',place:'Mötesplatser Nordost',summary:'在东北区社区中心的开放参观日',dates:{"2026-06-02": "13:00–15:00"},aid:'9d01c145-9b57-44ca-a1ee-72d49dbf3c4f'},
+  {title:'Saga och pyssel på urdu',cn:'Bergsjön图书馆活动',place:'Bergsjöns bibliotek',summary:'在Bergsjön图书馆的社区活动',dates:{"2026-05-31": "15:00–16:00"},aid:'9d8e1794-6344-403b-8b49-80a31169d65a'},
+  {title:'Föräldrar- och babyträning',cn:'东北区健康中心活动',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的健身体验',dates:{"2026-06-03": "10:00–10:50"},aid:'9db3316e-606d-4439-825c-c8aa16d62df5'},
+  {title:'Kulturskolans vårsalong',cn:'文化学校春季展',place:'Kulturhuset Kåken',summary:'在Kåken文化中心的文化活动',dates:{"2026-05-29": "", "2026-05-30": "", "2026-05-31": "", "2026-05-28": ""},aid:'9df42211-6ffc-4be2-bdc7-34944015a832'},
+  {title:'Handarbetscafé',cn:'手工咖啡馆',place:'Mötesplats Lunden',summary:'在Lunden社区中心的手工制作活动',dates:{"2026-06-03": "11:00–13:00"},aid:'9dfc375a-8ffc-44eb-92ce-f244632dabc2'},
+  {title:'Sittgympa',cn:'健身操',place:'Mötesplats S:t Gabriel Tynnered',summary:'在Tynnered社区中心的免费健身操课程',dates:{"2026-06-02": "10:30–11:00"},aid:'9e0d9982-baa0-4ee9-86cd-b74bca092766'},
+  {title:'Gratis replokal och studio | Tuve Fritidsgård',cn:'免费排练室',place:'Tuve fritidsgård',summary:'在Tuve休闲中心的青少年休闲活动',dates:{"2026-05-29": "", "2026-05-30": "", "2026-05-31": "", "2026-05-28": ""},aid:'9e5fee7d-fd74-467f-b2ae-f1d470f90d1f'},
+  {title:'Gratis juridisk rådgivning på Medborgarkontoret Biskop',cn:'Medborgarkontoret Bi活动',place:'Medborgarkontoret Biskopsgården',summary:'在Medborgarkontoret Bi的社区活动',dates:{"2026-06-03": "16:30–18:10"},aid:'9e9398e3-3741-424a-85f8-8fc35aab4f52'},
+  {title:'Cykelköket Navet',cn:'自行车维修',place:'Göteborg Stad / S-L Samuelsson',summary:'在哥德堡市政府的自行车维修服务',dates:{"2026-05-28": "15:00–20:00"},aid:'9f7cbc71-cf5e-46a4-a36b-abe68a8dd4c5'},
+  {title:'Dansa afro/jazz (för dig 7-13 år)',cn:'Bergsjön文化中心活动',place:'](/wps/portal/kalendarium/kalendarium-start?activityId=9fec688c-47a0-4edb-b276-417eac969b93)Kulturhuset Bergsjön',summary:'在Bergsjön文化中心的舞蹈课程',dates:{"2026-05-30": "13:00–14:30"},aid:'9fec688c-47a0-4edb-b276-417eac969b93'},
+  {title:'Historiegruppen',cn:'Landala文化中心活动',place:'Mötesplats Landala Kulturcenter',summary:'在Landala文化中心的社区活动',dates:{"2026-05-29": "11:00–13:00"},aid:'9ffd6c9d-6084-4b81-864f-30f40857cde8'},
+  {title:'Öppet hus i Angered',cn:'Angered开放日',place:'Mötesplatser Nordost',summary:'在东北区社区中心的开放参观日',dates:{"2026-06-03": "10:00–12:00"},aid:'a01c31ee-66f9-4c5f-bba2-9210aaae509a'},
+  {title:'Pyssla, lek och läs med bibliotekets unga läsambassadörer',cn:'Frölunda图书馆活动',place:'Frölunda bibliotek',summary:'在Frölunda图书馆的图书馆活动',dates:{"2026-06-03": "16:00–17:00"},aid:'a05ce8aa-2bd1-4556-bdc5-4d47eda1218c'},
+  {title:'Familjeträning',cn:'家庭训练',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的健身体验',dates:{"2026-05-28": "14:30–15:20"},aid:'a09b84fb-7fa0-48ce-8191-c9cda3019e3f'},
+  {title:'Träning med instruktör - i Kvibergs Parks utegym',cn:'教练指导健身',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的健身体验',dates:{"2026-06-03": "16:30–17:30"},aid:'a138a4fa-f136-4861-8082-9beaad437531'},
+  {title:'Pendars Schackklubb är igång igen!',cn:'国际象棋',place:'Kulturhuset Bergsjön',summary:'在Bergsjön文化中心的桌游或棋类活动',dates:{"2026-05-31": "13:00–15:00"},aid:'a15e46f1-fe9a-488f-94e3-020d623aea12'},
+  {title:'Öppet hus',cn:'Askim社区中心活动',place:'Mötesplats Askim',summary:'在Askim社区中心的开放参观日',dates:{"2026-06-02": "10:00–12:00"},aid:'a1d1f99b-0f27-412d-940a-a0bcc4c8cc0c'},
+  {title:'Ny på mötesplatsen',cn:'Askim社区中心活动',place:'Mötesplats Askim',summary:'在Askim社区中心的社区活动',dates:{"2026-05-29": "10:00–11:00"},aid:'a2bc0242-04b8-4af1-aae8-eab13cdfad3c'},
+  {title:'Gympa bas',cn:'基础健身操',place:'Mötesplats Vintergatan 1',summary:'在Vintergatan社区中心的免费健身操课程',dates:{"2026-05-28": "13:00–14:30"},aid:'a2cadac1-3410-40b4-9e5f-0afca71ea3ad'},
+  {title:'Pröva på självförsvar - Krav maga på Välens idrottsplats',cn:'GKMK Göteborgs kravm活动',place:'GKMK Göteborgs kravmagaklubb',summary:'在GKMK Göteborgs kravm的社区活动',dates:{"2026-05-29": "16:00–18:00"},aid:'a35d9e96-3864-45a3-8d3e-8bbe4084200c'},
+  {title:'Läxhjälp för barn och unga',cn:'儿童作业辅导',place:'Angereds bibliotek',summary:'在Angered图书馆的免费课业辅导',dates:{"2026-05-28": "17:00–18:30"},aid:'a4bee3ee-3316-49ec-a58f-6112391c8f81'},
+  {title:'Capoeira på Torpaskolan',cn:'卡波耶拉',place:'Skola som arena',summary:'在学校运动场的社区活动',dates:{"2026-05-28": "14:30–16:30"},aid:'a4f7289d-0dba-4ca6-b77e-56b596e0532c'},
+  {title:'Öppen ateljé: Lufttorkande lera',cn:'开放画室',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆的绘画创作活动',dates:{"2026-05-29": "13:00–15:00"},aid:'a5181ec5-ff08-4f1a-b7f1-4ec418764a09'},
+  {title:'Fredagsklubben – öppen ateljé för alla barn',cn:'开放画室',place:'Kulturhuset Bergsjön',summary:'在Bergsjön文化中心的绘画创作活动',dates:{"2026-05-29": "14:00–18:00"},aid:'a51d01ed-adcf-4f15-b404-b667bc9a7bfe'},
+  {title:'Inomhusboule',cn:'法式滚球',place:'Mötesplats Högsbo',summary:'在högsbo社区中心的社区活动',dates:{"2026-06-02": "10:30–11:30"},aid:'a5556ab7-7893-48e6-bba6-6aa6c0f8ca9d'},
+  {title:'Öppen verksamhet - Fredag (varannan vecka)',cn:'开放活动',place:'](/wps/portal/kalendarium/kalendarium-start?activityId=a5f076c0-56b1-4698-8e31-85dffdde56a6)Bergsjögårdens mötesplats',summary:'在Bergsjögården社区的社区活动',dates:{"2026-05-29": "", "2026-05-28": ""},aid:'a5f076c0-56b1-4698-8e31-85dffdde56a6'},
+  {title:'Torsdagsträff med olika teman',cn:'周四聚会',place:'Mötesplats Lunden',summary:'在Lunden社区中心的社区活动',dates:{"2026-05-28": "13:00–15:00"},aid:'a6241597-5cca-4405-ad51-4423e3aafe80'},
+  {title:'Seniorträffar Kulturhuset Bergsjön',cn:'长者聚会',place:'Mötesplatser Nordost',summary:'在东北区社区中心的长者社交活动',dates:{"2026-06-03": "10:30–11:30"},aid:'a634d7e8-a854-43aa-9c61-34d637e28f7d'},
+  {title:'Prata spanska',cn:'Axelhuset活动',place:'Axelhuset',summary:'在Axelhuset的社区活动',dates:{"2026-05-29": "10:30–12:00"},aid:'a6b89f32-8c9e-416e-93e9-0d9836b4bd43'},
+  {title:'Fritid i Bergkristallparken',cn:'公园休闲活动',place:'Bergkristallparken, fritidsverksamhet',summary:'在Bergkristall公园的青少年休闲活动',dates:{"2026-05-29": "", "2026-05-30": "", "2026-05-31": "", "2026-05-28": ""},aid:'a796ab77-70a4-49b4-b6ee-4fa9ff5e98eb'},
+  {title:'Är du redo för schack?',cn:'国际象棋',place:'Mötesplats Backa',summary:'在Backa社区中心的桌游或棋类活动',dates:{"2026-06-01": "10:00–12:00"},aid:'a875aac1-8f27-4716-b6f6-91d26341800d'},
+  {title:'Språkcafé',cn:'语言咖啡馆（Gamlestadens Bibliot）',place:'Gamlestadens Bibliotek',summary:'在Gamlestadens Bibliot练习瑞典语会话',dates:{"2026-06-03": "15:30–17:00"},aid:'a8a97357-0035-4ae3-a56c-82212557ae68'},
+  {title:'Seniorträffar på Kulturhuset Bergsjön',cn:'长者聚会',place:'Kulturhuset Bergsjön',summary:'在Bergsjön文化中心的长者社交活动',dates:{"2026-06-03": "10:30–12:30"},aid:'a8de4857-1f2d-441c-a5fc-ab78535ded2a'},
+  {title:'Bokcirkel: Familjelexikon av Natalia Ginzburg',cn:'读书会',place:'Lagerhusets Bibliotek',summary:'在Lagerhuset图书馆的社区活动',dates:{"2026-06-01": "17:00–18:00"},aid:'a9242f2f-c711-4b03-814e-431427858630'},
+  {title:'Fira internationella mensdagen! (13-25 år)',cn:'国际月经日庆祝',place:'](/wps/portal/kalendarium/kalendarium-start?activityId=a97e8d32-f99b-4c66-b891-add4e4f60453)Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆的社区活动',dates:{"2026-05-28": "16:00–19:00"},aid:'a97e8d32-f99b-4c66-b891-add4e4f60453'},
+  {title:'Språkcafé',cn:'语言咖啡馆（Angered图书馆）',place:'Angereds bibliotek',summary:'在Angered图书馆练习瑞典语会话',dates:{"2026-05-28": "17:00–18:30"},aid:'a9922906-6948-40b9-b7d5-1ed175779f39'},
+  {title:'Sittande och stående gympa - INSTÄLLD',cn:'健身操',place:'Mötesplats Backa',summary:'在Backa社区中心的免费健身操课程',dates:{"2026-06-01": "13:00–14:00"},aid:'aa72ff2a-f3f3-4e86-93fa-b03dfd3567e3'},
+  {title:'Bokcirkel',cn:'读书会',place:'Mötesplats Verket',summary:'在Verket社区中心的社区活动',dates:{"2026-06-01": "10:30–12:30"},aid:'ac387d39-b3d5-4bf1-b312-937d1b4dc264'},
+  {title:'Träning för hela kroppen',cn:'Växthuset温室活动',place:'Växthuset',summary:'在Växthuset温室的健身体验',dates:{"2026-06-01": "11:30–12:15"},aid:'ac5cf550-5a0f-4c01-89db-0845613a8b38'},
+  {title:'Läxhjälp',cn:'作业辅导',place:'Lundby bibliotek',summary:'在Lundby图书馆的免费课业辅导',dates:{"2026-06-01": "17:00–18:30"},aid:'ace0253c-f33a-47fb-9497-bb100d60d594'},
+  {title:'Träning med instruktör - i Ruddalens utegym',cn:'教练指导健身',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的健身体验',dates:{"2026-06-02": "10:00–11:00"},aid:'ad7dca75-6d58-430e-93d6-ce2b36293f68'},
+  {title:'Fritidsverksamheten Linden i positivparken',cn:'休闲活动',place:'Fritidsklubben Linden',summary:'在Linden休闲俱乐部的青少年休闲活动',dates:{"2026-06-03": "13:30–17:00"},aid:'ad890d66-c38e-4872-8077-4402f5f01efe'},
+  {title:'Dans för kvinnor',cn:'体育与协会管理局活动',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的舞蹈课程',dates:{"2026-05-29": "18:00–19:30"},aid:'ae437d7f-6e88-4adf-b609-c4be7239f619'},
+  {title:'Drop-in för mellanstadiet (åk 4–6) – Brunnsbo fritidsgård',cn:'小学随到随玩',place:'Brunnsbo fritidsgård](/wps/portal/kalendarium/kalendarium-start?activityId=ae5270f3-1cd8-47c0-af37-23f118d12fd4)Brunnsbo fritidsgård',summary:'在Brunnsbo休闲中心的青少年休闲活动',dates:{"2026-05-29": "", "2026-05-30": "", "2026-05-31": "", "2026-05-28": ""},aid:'ae5270f3-1cd8-47c0-af37-23f118d12fd4'},
+  {title:'Ponnyridning på Barnens zoo',cn:'小马骑行',place:'Slottsskogen',summary:'在Slottsskogen公园的动物互动体验',dates:{"2026-05-29": "10:00–12:30"},aid:'af1b42af-9583-44d8-8e1a-94939705c8ca'},
+  {title:'Bygg på Bygglekplatsen',cn:'建筑乐园玩耍',place:'Bygglekplatsen i Biskopsgården',summary:'在Biskopsgården建筑乐园的社区活动',dates:{"2026-05-28": "13:00–17:00"},aid:'af31f83d-4710-4b76-8599-04563e7c039a'},
+  {title:'Qigonginspirerad träning i Gårdstensdalen',cn:'气功训练',place:'Mötesplatser Nordost',summary:'在东北区社区中心的健身体验',dates:{"2026-05-28": "13:00–14:00"},aid:'b06acbc4-3374-4f32-9055-0759d1015baf'},
+  {title:'Språkworkshop på svenska och ukrainska',cn:'Lagerhuset图书馆活动',place:'Lagerhusets Bibliotek',summary:'在Lagerhuset图书馆的社区活动',dates:{"2026-05-30": "12:00–14:00"},aid:'b0ccb1f1-5f63-4e92-bdbd-1ce717db29ff'},
+  {title:'Träna capoeira med oss på Frejaskolan!',cn:'卡波耶拉',place:'Skola som arena',summary:'在学校运动场的社区活动',dates:{"2026-05-31": "10:00–11:00"},aid:'b0de5171-0d24-47f5-b4eb-5af9d527fa98'},
+  {title:'Öppet gym (gymintro kl 14.30)',cn:'开放健身房',place:'](/wps/portal/kalendarium/kalendarium-start?activityId=b102518d-3eef-458e-bff5-c72f2bca3db0)Hälsoteket i Nordost',summary:'在东北区健康中心的社区活动',dates:{"2026-05-28": "14:00–16:00"},aid:'b102518d-3eef-458e-bff5-c72f2bca3db0'},
+  {title:'Sagostund med TAKK',cn:'故事时间',place:'Opaltorgets Bibliotek',summary:'在Opaltorget图书馆的儿童故事朗读',dates:{"2026-05-29": "10:30–11:00"},aid:'b150f2d4-08c1-42df-bc97-7b2fe5c1d487'},
+  {title:'Sittgympa på storbild',cn:'健身操',place:'Mötesplats Tuve',summary:'在Tuve社区中心的免费健身操课程',dates:{"2026-05-29": "11:00–11:45"},aid:'b15fc31c-ba40-4e74-a927-eaa56af83f5f'},
+  {title:'Fritidsverksamheten Linden i positivparken',cn:'休闲活动',place:'Fritidsklubben Linden',summary:'在Linden休闲俱乐部的青少年休闲活动',dates:{"2026-06-02": "13:30–17:00"},aid:'b1ab9990-82f2-45bc-9cbc-3cc93d103852'},
+  {title:'Musiksamling onsdag förmiddag',cn:'Eldorado Resurscente活动',place:'Eldorado Resurscenter',summary:'在Eldorado Resurscente的音乐演出活动',dates:{"2026-06-03": "09:30–10:10"},aid:'b34824ca-e985-48dd-a048-a3267a9e7544'},
+  {title:'Lördagskul i Masthuggshallen',cn:'Crossover BAC活动',place:'Crossover BAC',summary:'在Crossover BAC的社区活动',dates:{"2026-05-30": "19:00–22:00"},aid:'b420424b-1a44-4739-82d6-cce2548d9d93'},
+  {title:'Drop in med kaffe',cn:'长者咖啡聚会',place:'Mötesplats Sandarna',summary:'在Sandarna社区中心的咖啡社交聚会',dates:{"2026-06-01": "10:00–11:30"},aid:'b44f0805-8301-4dbb-a27c-368ae099189c'},
+  {title:'Svenska språkcaféet',cn:'语言咖啡馆（Biskopsgården图书馆）',place:'Biskopsgårdens bibliotek',summary:'在Biskopsgården图书馆练习瑞典语会话',dates:{"2026-05-28": "16:30–18:00"},aid:'b4d90ee3-653f-4916-b22b-d2993e25aac2'},
+  {title:'Drop in för Mellanstadiet (åk 4–6) - Backa Fritidsgård',cn:'小学随到随玩',place:'Backa Fritidsgård](/wps/portal/kalendarium/kalendarium-start?activityId=b552c5c1-3cac-40ce-93c3-31621bdf6ccf)Backa fritidsgård',summary:'在Backa休闲中心的青少年休闲活动',dates:{"2026-05-29": "", "2026-05-30": "", "2026-05-31": "", "2026-05-28": ""},aid:'b552c5c1-3cac-40ce-93c3-31621bdf6ccf'},
+  {title:'Språkträff',cn:'市立图书馆活动',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆的社区活动',dates:{"2026-06-03": "17:30–19:00"},aid:'b5ca95d6-ac13-4528-820d-6a9ea9734403'},
+  {title:'Skriv och dela glädje',cn:'写作与分享',place:'Mötesplats Backa',summary:'在Backa社区中心的社区活动',dates:{"2026-05-28": "09:30–12:20"},aid:'b5fdbac8-ce93-4dcb-898e-d66f36eb1dc9'},
+  {title:'Cirkusworkshop med Cirkus Cirkör',cn:'Kåken文化中心活动',place:'Kulturhuset Kåken',summary:'在Kåken文化中心的社区活动',dates:{"2026-05-31": "12:30–13:45"},aid:'b5fe7180-827c-49e6-8207-2f06c6ca5bf1'},
+  {title:'Gympa för kvinnor',cn:'女性健身操',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的免费健身操课程',dates:{"2026-05-28": "11:00–11:50"},aid:'b77163b3-3fec-4932-9cf5-94879ffa4c83'},
+  {title:'Digitala tisdagar',cn:'Lundby图书馆活动',place:'Lundby bibliotek',summary:'在Lundby图书馆的数字技能支持',dates:{"2026-06-02": "11:00–12:00"},aid:'b79a67bc-0541-406a-80e6-ada91a936236'},
+  {title:'Cirkelträning',cn:'东北区健康中心活动',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的健身体验',dates:{"2026-06-03": "13:00–13:50"},aid:'b813673f-2fd8-490c-93d0-a1b3c136a74e'},
+  {title:'Öppet hus årskurs 4-6',cn:'小学开放日',place:'Stenhuset ungdomsverksamhet',summary:'在Stenhuset青年活动的开放参观日',dates:{"2026-05-29": "14:00–16:30"},aid:'b849a13a-2929-4d66-a6f6-7672706008f3'},
+  {title:'Maana tjejgrupp (13–19 år)',cn:'Maana女孩小组',place:'](/wps/portal/kalendarium/kalendarium-start?activityId=b88ee6e0-dce2-461e-a753-edd1026d45a4)Kulturhuset Bergsjön',summary:'在Bergsjön文化中心的社区活动',dates:{"2026-05-28": "16:00–18:00"},aid:'b88ee6e0-dce2-461e-a753-edd1026d45a4'},
+  {title:'Drop in med kaffe för dig som är senior',cn:'长者咖啡聚会',place:'Mötesplats Stenhuset',summary:'在Stenhuset社区中心的长者社交活动',dates:{"2026-05-28": "11:00–14:00"},aid:'b9554f1a-d348-4315-9cb9-3eb538eeb432'},
+  {title:'Maana tjejgrupp (16–19 år)',cn:'Maana女孩小组',place:'](/wps/portal/kalendarium/kalendarium-start?activityId=b9cf0c7a-69b5-4ecf-bb78-0f29235b30e4)Kulturhuset Bergsjön',summary:'在Bergsjön文化中心的社区活动',dates:{"2026-06-03": "16:00–18:00"},aid:'b9cf0c7a-69b5-4ecf-bb78-0f29235b30e4'},
+  {title:'Engelskt språkcafé',cn:'语言咖啡馆（Lundby图书馆）',place:'Lundby bibliotek',summary:'在Lundby图书馆练习瑞典语会话',dates:{"2026-05-29": "13:00–14:00"},aid:'ba28aeba-846d-42da-a372-6c3620c31aa3'},
+  {title:'Atom Studios',cn:'Atom录音室活动',place:'Atom Studios',summary:'在Atom录音室的社区活动',dates:{"2026-06-03": "16:00–21:00"},aid:'ba6ffff1-6d85-4d72-ae80-cedd88bcd692'},
+  {title:'Spela canasta med oss i Tuve!',cn:'Tuve社区中心活动',place:'Mötesplats Tuve',summary:'在Tuve社区中心的桌游或棋类活动',dates:{"2026-06-03": "10:00–13:00"},aid:'baa153b9-9a9d-4eca-abfe-25f250933916'},
+  {title:'Qigong',cn:'气功训练',place:'Guldhedens bibliotek',summary:'在Guldhedens bibliotek的社区活动',dates:{"2026-06-01": "10:15–11:00"},aid:'baa4202f-0284-4353-ba47-adf9c3e0bda4'},
+  {title:'Öppet gym Tuvevallens motionscentrum',cn:'开放健身房',place:'Tuvevallens motionscentrum',summary:'在Tuvevallens motionsc的社区活动',dates:{"2026-06-03": "10:00–11:00"},aid:'bad0854b-b64a-4f75-ba02-7a2ebf385246'},
+  {title:'KulturPilen - Öppen verksamhet - 10 -12 år',cn:'文化之箭活动',place:'Kulturskolan Göteborg och Fritid i sydväst',summary:'在哥德堡文化学校的文化活动',dates:{"2026-06-03": "14:00–19:00"},aid:'bb850b11-5d0a-4e2a-857a-e417da13ecd2'},
+  {title:'Dansmix',cn:'混合舞蹈',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的舞蹈课程',dates:{"2026-05-29": "11:00–11:50"},aid:'bccc643c-37d3-428f-be3d-a9e96625c025'},
+  {title:'Förhandstitt på Västlänkens nya station',cn:'Trafikverket活动',place:'Trafikverket',summary:'在Trafikverket的社区活动',dates:{"2026-05-30": "", "2026-05-31": ""},aid:'bd552f27-0ad6-49d0-b928-a7290a213d81'},
+  {title:'Politikerutfrågning',cn:'Göteborgs Stads HBTQ活动',place:'Göteborgs Stads HBTQI-råd',summary:'在Göteborgs Stads HBTQ的社区活动',dates:{"2026-06-01": "18:00–19:30"},aid:'bd94a306-ec8d-411c-ac9f-3f9f9657eda9'},
+  {title:'Utställning: Djetinjstvo u ratu: crteži iz Srebrenice/Barndom i krig: teckningar från Srebrenica',cn:'展览：Djetinjstvo u ratu: ',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆举办的艺术展览',dates:{"2026-06-02": "08:00–20:00"},aid:'be223436-33e8-4428-838c-522a0109dfe6'},
+  {title:'Pokémon-klubb',cn:'Opaltorget图书馆活动',place:'Opaltorgets Bibliotek',summary:'在Opaltorget图书馆的社区活动',dates:{"2026-06-01": "14:30–15:30"},aid:'bee633de-3c7f-4718-aaa8-4250150933db'},
+  {title:'Lek på Bygglekplatsen',cn:'Biskopsgården建筑乐园活动',place:'Bygglekplatsen i Biskopsgården',summary:'在Biskopsgården建筑乐园的社区活动',dates:{"2026-05-29": "10:00–12:00"},aid:'befbb20e-d525-45cd-a9d9-70774f7afd3c'},
+  {title:'KulturPilen - Öppen verksamhet - 10 -12 år',cn:'文化之箭活动',place:'Kulturskolan Göteborg och Fritid i sydväst',summary:'在哥德堡文化学校的文化活动',dates:{"2026-06-02": "14:00–17:00"},aid:'bf448785-9441-4cb8-b759-61e930bc1171'},
+  {title:'Mindfulness i skogen i Svarte mossen',cn:'森林正念',place:'Hälsolots Hisingen',summary:'在Hisingen健康导航的正念冥想课程',dates:{"2026-06-02": "13:00–14:00"},aid:'bf450586-75de-4601-9b7f-3f018b614dc1'},
+  {title:'Utställning: Djetinjstvo u ratu: crteži iz Srebrenice/Barndom i krig: teckningar från Srebrenica',cn:'展览：Djetinjstvo u ratu: ',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆举办的艺术展览',dates:{"2026-06-03": "08:00–20:00"},aid:'c014357a-d899-4324-bb7b-2484a5b41137'},
+  {title:'Spela biljard hos oss - nya köer, bättre spelkänsla',cn:'台球',place:'Mötesplats Backa',summary:'在Backa社区中心的桌游或棋类活动',dates:{"2026-05-28": "10:00–13:00"},aid:'c04555dd-5cff-4110-964f-99173629f95c'},
+  {title:'Grounding för kvinnor',cn:'东北区健康中心活动',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的社区活动',dates:{"2026-05-29": "13:00–13:50"},aid:'c0748f00-3fd6-4a10-b2ef-190b17049b2e'},
+  {title:'Taekwondo på Torpaskolan',cn:'学校运动场活动',place:'Skola som arena',summary:'在学校运动场的社区活动',dates:{"2026-06-02": "17:00–19:00"},aid:'c09ceb2c-726c-429f-963e-9c49a6c9f297'},
+  {title:'Ta ukulelekörkort!',cn:'尤克里里',place:'Mötesplats Frölunda',summary:'在frölunda社区中心的社区活动',dates:{"2026-06-01": "14:30–15:15"},aid:'c0b30d1a-c24c-4e56-b1f2-01adf1191003'},
+  {title:'Öppet hus i Angered',cn:'Angered开放日',place:'Mötesplatser Nordost',summary:'在东北区社区中心的开放参观日',dates:{"2026-06-01": "13:00–15:00"},aid:'c1012c18-3a63-4b4d-8fc4-3eb9d00fc4fb'},
+  {title:'Tisdagspyssel',cn:'Backa图书馆活动',place:'Backa bibliotek',summary:'在Backa图书馆的社区活动',dates:{"2026-06-02": "14:30–16:00"},aid:'c13facd1-311e-4dd8-91aa-64eaae9ae706'},
+  {title:'Barnvagnspromenad',cn:'东北区健康中心活动',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的社区活动',dates:{"2026-06-03": "13:00–13:50"},aid:'c1691867-b002-4b5c-be97-2daaa15cdda0'},
+  {title:'Drop in med kaffe',cn:'长者咖啡聚会',place:'Mötesplats Mariaträffen',summary:'在mariaträffen社区中心的咖啡社交聚会',dates:{"2026-06-01": "12:00–15:00"},aid:'c189e05b-075d-4c19-8fc4-aff0349783b8'},
+  {title:'Café med Mona',cn:'blidvädersgatan 16 (monsunen)社区中心活动',place:'Mötesplats Blidvädersgatan 16 (Monsunen)',summary:'在blidvädersgatan 16 (monsunen)社区中心的社区活动',dates:{"2026-06-03": "13:30–14:30"},aid:'c1e6f999-4986-4ab6-a3f7-7bd21926af9e'},
+  {title:'Allsång',cn:'Vintergatan社区中心活动',place:'Mötesplats Vintergatan 1',summary:'在Vintergatan社区中心的音乐演出活动',dates:{"2026-06-03": "13:15–14:30"},aid:'c22b029f-de56-430d-b8e9-cc70ccf278c4'},
+  {title:'Kreativ träff',cn:'东北区健康中心活动',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的社区活动',dates:{"2026-06-03": "14:00–15:15"},aid:'c386b7bd-de1f-4746-9efb-84c5185dd6f0'},
+  {title:'Lättgympa i Gamlestaden',cn:'健身操',place:'Mötesplatser Nordost',summary:'在东北区社区中心的免费健身操课程',dates:{"2026-06-03": "10:00–10:45"},aid:'c3899f13-2e71-4341-9580-e467b83a4e73'},
+  {title:'Tematräff Tandtroll och karies hos de yngsta barnen',cn:'儿童牙齿健康讲座',place:'Familjecentralen Sandarna',summary:'在Sandarna家庭中心的社区活动',dates:{"2026-05-28": "13:00–14:00"},aid:'c3cc6281-00b1-4950-8e80-cd617f57f7c3'},
+  {title:'Öppet hus årskurs 4-6',cn:'小学开放日',place:'Stenhuset ungdomsverksamhet',summary:'在Stenhuset青年活动的开放参观日',dates:{"2026-06-01": "14:00–16:30"},aid:'c4462cf7-6e7d-4d7d-b381-7b48faec26ee'},
+  {title:'Presentación del libro: Inmanencia',cn:'Lagerhuset图书馆活动',place:'Lagerhusets Bibliotek',summary:'在Lagerhuset图书馆的社区活动',dates:{"2026-05-29": "17:30–19:45"},aid:'c461aa1d-611a-4b9d-96be-f75dd7801860'},
+  {title:'Veterandagen',cn:'Göteborgs Stad活动',place:'Göteborgs Stad',summary:'在Göteborgs Stad的社区活动',dates:{"2026-05-29": "16:00–19:00"},aid:'c4770109-2f82-428d-9b02-a0a8ac807a65'},
+  {title:'Utställning: Ljus',cn:'展览：Ljus',place:'Frölunda Kulturhus',summary:'在Frölunda文化中心举办的艺术展览',dates:{"2026-05-30": "", "2026-05-31": "", "2026-05-28": ""},aid:'c49bafcd-7dcc-4703-9e36-e448b2c42401'},
+  {title:'Lördag på Kustgatan',cn:'Eldorado Resurscente活动',place:'Eldorado Resurscenter',summary:'在Eldorado Resurscente的社区活动',dates:{"2026-05-30": "10:00–15:00"},aid:'c4e03ec1-b216-46e4-b70d-ec154ec50828'},
+  {title:'Riktade öppettider: små barn med NPF',cn:'Friskväderstorget图书馆活动',place:'Friskväderstorgets bibliotek',summary:'在Friskväderstorget图书馆的社区活动',dates:{"2026-05-29": "14:00–16:00"},aid:'c5c1d3e6-a017-4e49-8d57-a6ebb6d2b806'},
+  {title:'Textilworkshop - Skapa drömfångare till en utställning i Köpenhamn',cn:'展览',place:'Kulturhuset Bergsjön',summary:'在Bergsjön文化中心举办的艺术展览',dates:{"2026-05-31": "14:30–16:30"},aid:'c60a0182-e81a-43fc-86ee-590aa946432f'},
+  {title:'Kom och spela Rummy!',cn:'来玩游戏',place:'Mötesplats Björkekärr',summary:'在Björkekärr社区中心的桌游或棋类活动',dates:{"2026-06-02": "13:00–15:30"},aid:'c646add5-e78b-42c6-a3fa-1068fa5a41db'},
+  {title:'Läxhjälp i matte',cn:'数学辅导',place:'Kortedala bibliotek',summary:'在Kortedala图书馆的免费课业辅导',dates:{"2026-05-28": "17:00–18:45"},aid:'c6d08589-2a8c-4e72-aa72-db3c38f53f8c'},
+  {title:'Pilates',cn:'东北区健康中心活动',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的社区活动',dates:{"2026-06-02": "13:00–13:50"},aid:'c6f9f069-9f1a-48bb-997d-aadbfcccf924'},
+  {title:'Fransk konversation',cn:'法语会话',place:'Mötesplats Landala Kulturcenter',summary:'在Landala文化中心练习法语会话',dates:{"2026-05-28": "11:00–13:00"},aid:'c70c2a6f-d751-4696-aa2b-37c8132395af'},
+  {title:'Mindfulness',cn:'正念冥想',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的正念冥想课程',dates:{"2026-06-02": "09:00–09:50"},aid:'c7f94034-4ab5-41fc-b708-09cbb4620f5f'},
+  {title:'Hitta ditt lugn med stickning och mandala',cn:'Backa社区中心活动',place:'Mötesplats Backa',summary:'在Backa社区中心的手工制作活动',dates:{"2026-06-03": "15:00–18:00"},aid:'c83d04ed-d31c-4dec-b5d0-2f5248901641'},
+  {title:'Schack på Kåken - nybörjarnivå',cn:'国际象棋',place:'Kulturhuset Kåken',summary:'在Kåken文化中心的桌游或棋类活动',dates:{"2026-06-02": "15:30–17:00"},aid:'c8d65a7e-3836-4615-afe0-8413a2606ccd'},
+  {title:'Bygg på Bygglekplatsen',cn:'建筑乐园玩耍',place:'Bygglekplatsen i Biskopsgården',summary:'在Biskopsgården建筑乐园的社区活动',dates:{"2026-05-29": "13:00–16:00"},aid:'c9146d39-0ad8-4802-85e3-9ec0487fdc65'},
+  {title:'Vill du lära dig spela bridge?',cn:'Tuve社区中心活动',place:'Mötesplats Tuve',summary:'在Tuve社区中心的桌游或棋类活动',dates:{"2026-06-01": "12:00–15:00"},aid:'c9d27bc5-9d71-4e54-bca8-b1ca8dbfb53c'},
+  {title:'LAJNDÄNS eller Harrysson & Jonsson med Pelikanteatern',cn:'Hjällbo bibliotek活动',place:'Hjällbo bibliotek',summary:'在Hjällbo bibliotek的社区活动',dates:{"2026-05-31": "14:00–14:35"},aid:'c9e9a8a4-634b-4acb-9a15-506d16c5da06'},
+  {title:'Virk-verkstan',cn:'Opaltorget图书馆活动',place:'Opaltorgets Bibliotek',summary:'在Opaltorget图书馆的社区活动',dates:{"2026-06-02": "15:00–16:00"},aid:'ca77b117-0136-4e9f-a271-19660fae12a9'},
+  {title:'Handarbetsgrupp',cn:'Solängen社区中心活动',place:'Mötesplats Solängsvägen 53 (fd mötesplats Solängen)',summary:'在Solängen社区中心的手工制作活动',dates:{"2026-06-01": "13:30–15:00"},aid:'cb4301ac-5b94-4053-a642-464fdace73e7'},
+  {title:'Engelsk konversation',cn:'英语会话',place:'Mötesplats Verket',summary:'在Verket社区中心练习英语会话',dates:{"2026-06-01": "11:00–13:00"},aid:'cb7b68a8-6647-4044-97c8-c2f516309b9c'},
+  {title:'Läxhjälp och träna svenska',cn:'作业辅导',place:'Lagerhusets Bibliotek',summary:'在Lagerhuset图书馆的免费课业辅导',dates:{"2026-05-28": "16:30–18:30"},aid:'cc00ddc7-eca9-4133-beab-0d25b2387a3d'},
+  {title:'Guldlördag',cn:'Guldhedens IK活动',place:'Guldhedens IK',summary:'在Guldhedens IK的社区活动',dates:{"2026-05-30": "17:00–22:00"},aid:'cc6e154a-62fb-44d2-85e4-8e7cc34ddbe7'},
+  {title:'Fritidsverksamheten Linden i positivparken',cn:'休闲活动',place:'Fritidsklubben Linden',summary:'在Linden休闲俱乐部的青少年休闲活动',dates:{"2026-05-28": "13:30–17:00"},aid:'ccae842e-b0ff-4b5f-b1f2-065ccce06547'},
+  {title:'Bokcirkel på lätt svenska',cn:'读书会',place:'Frölunda bibliotek',summary:'在Frölunda图书馆的社区活动',dates:{"2026-05-28": "13:30–15:00"},aid:'cd4c8220-e9dd-4da5-83e4-73445df6a469'},
+  {title:'Bingo - Kortedala',cn:'宾果游戏',place:'Mötesplatser Nordost',summary:'在东北区社区中心的社交宾果游戏',dates:{"2026-05-28": "10:30–12:30"},aid:'ce0a7a16-2d64-4c39-9452-8b0b56c7262f'},
+  {title:'Språkkafe',cn:'Community center Bru活动',place:'Community center Brunnsbo',summary:'在Community center Bru的社区活动',dates:{"2026-06-02": "17:00–18:30"},aid:'ce0f83c2-ca10-4841-978c-6457ec51b157'},
+  {title:'Familjetorsdag',cn:'家庭星期四',place:'Askims bibliotek',summary:'在Askim图书馆的社区活动',dates:{"2026-05-28": "15:00–17:00"},aid:'cf4fe84d-3180-4b57-a48b-ed3cb5ef80df'},
+  {title:'Språkkafé',cn:'语言咖啡馆（Kortedala图书馆）',place:'Kortedala bibliotek',summary:'在Kortedala图书馆练习瑞典语会话',dates:{"2026-05-28": "17:00–18:45"},aid:'cf891c27-af90-4a43-8a78-9a4556d6a268'},
+  {title:'Gratis träning för kvinnor i Hjalmarstugan',cn:'女性免费健身',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的免费健身体验',dates:{"2026-05-28": "11:00–11:45"},aid:'cfe801e6-3c4a-4bb6-a3e7-582a4e63b302'},
+  {title:'Solikyl - minska matsvinnet',cn:'Community center Bru活动',place:'Community center Brunnsbo',summary:'在Community center Bru的社区活动',dates:{"2026-05-29": "18:30–19:30"},aid:'d01f56fe-a39d-44e9-ba2a-35883f50efed'},
+  {title:'TV-spel i Rum för unga (13-25 år)',cn:'青年电子游戏',place:'](/wps/portal/kalendarium/kalendarium-start?activityId=d07d0779-62ad-4192-88b7-f3c194bb1667)Kulturhuset Bergsjön',summary:'在Bergsjön文化中心的桌游或棋类活动',dates:{"2026-05-28": "15:00–19:00"},aid:'d07d0779-62ad-4192-88b7-f3c194bb1667'},
+  {title:'Cirkelkören',cn:'社区合唱团',place:'Mötesplats Tuve',summary:'在Tuve社区中心的社区活动',dates:{"2026-05-28": "11:00–13:00"},aid:'d0a30939-1681-4bb1-be43-8d67b3587d02'},
+  {title:'Digital Workshop – drop‑in på Medborgarkontoret Biskop',cn:'Medborgarkontoret Bi活动',place:'Medborgarkontoret Biskopsgården',summary:'在Medborgarkontoret Bi的数字技能支持',dates:{"2026-05-29": "13:00–15:00"},aid:'d19c1304-c7b8-43be-9576-f1ae264cc0d4'},
+  {title:'Srebrenica – 8372 liv, ett gemensamt minne',cn:'市立图书馆活动',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆的社区活动',dates:{"2026-05-30": "14:00–15:30"},aid:'d1fe7dab-b140-464a-aa65-347e7b24ec75'},
+  {title:'Angered möts: dialog och aktiviteter',cn:'Angered社区对话',place:'Kulturhuset Blå Stället',summary:'在Blå Stället文化中心的社区活动',dates:{"2026-05-28": "15:00–18:30"},aid:'d2520610-4b60-49ad-a34f-f3dba8e192ac'},
+  {title:'Öppetgym (gymintro kl 14)',cn:'东北区健康中心活动',place:'](/wps/portal/kalendarium/kalendarium-start?activityId=d3e12f59-a9ad-4cd6-8622-49b9e83ae301)Hälsoteket i Nordost',summary:'在东北区健康中心的社区活动',dates:{"2026-06-02": "13:30–15:30"},aid:'d3e12f59-a9ad-4cd6-8622-49b9e83ae301'},
+  {title:'Mötas och må bra, Dalheimers Kustgatan TEMA: Musikquiz',cn:'Förvaltningen för fu活动',place:'Förvaltningen för funktionsstöd',summary:'在Förvaltningen för fu的音乐演出活动',dates:{"2026-06-03": "13:00–15:00"},aid:'d4ba3739-1ac4-4f4d-b42a-20f176e02ad0'},
+  {title:'Tipspromenad - Kortedala',cn:'问答散步',place:'Mötesplatser Nordost',summary:'在东北区社区中心的社区活动',dates:{"2026-06-02": "11:00–13:00"},aid:'d533301d-89b3-48e9-9658-45b8d9c52a68'},
+  {title:'Dansa afro/jazz (för dig 7-13 år)',cn:'Bergsjön文化中心活动',place:'](/wps/portal/kalendarium/kalendarium-start?activityId=d60d1687-3e9b-4e70-aa51-4eaf678d70c8)Kulturhuset Bergsjön',summary:'在Bergsjön文化中心的舞蹈课程',dates:{"2026-05-31": "13:00–14:30"},aid:'d60d1687-3e9b-4e70-aa51-4eaf678d70c8'},
+  {title:'Gåfotboll i Hjällbo',cn:'足球活动',place:'Mötesplatser Nordost',summary:'在东北区社区中心的足球活动',dates:{"2026-06-03": "13:00–14:30"},aid:'d62245d5-7a81-4cb3-a40b-cf59b0f03bed'},
+  {title:'Lunchkonsert: Världens solo och duo',cn:'午间音乐会',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆的音乐演出活动',dates:{"2026-05-29": "12:15–13:00"},aid:'d625105f-0a7b-4f31-8545-f993cb28aa32'},
+  {title:'Cirkelträning',cn:'东北区健康中心活动',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的健身体验',dates:{"2026-06-03": "10:30–11:15"},aid:'d677f620-7fd3-405d-b238-30e4164fae39'},
+  {title:'Musikunderhållning',cn:'音乐娱乐',place:'Mötesplats Lillekärr Södra 55 (fd mötesplats Kärra)',summary:'在Lillekärr社区中心的音乐演出活动',dates:{"2026-06-03": "11:00–11:30"},aid:'d7964e03-ec87-4f6b-a38c-2aeb8b296979'},
+  {title:'Söndagsateljé',cn:'画室活动',place:'Kulturhuset Blå Stället',summary:'在Blå Stället文化中心的绘画创作活动',dates:{"2026-05-31": "12:00–14:00"},aid:'d7efb083-8577-4757-bd5e-dc2452edabb6'},
+  {title:'BlackBirdFestival i Positivparken',cn:'Frölunda文化中心活动',place:'Frölunda Kulturhus',summary:'在Frölunda文化中心的社区活动',dates:{"2026-05-30": "14:00–21:00"},aid:'d7fff40c-8fd9-440c-8a6a-0054a9b6c9c0'},
+  {title:'Gympa för seniorer',cn:'健身操',place:'Kulturhuset Kåken',summary:'在Kåken文化中心的免费健身操课程',dates:{"2026-06-01": "10:30–11:15"},aid:'d804e737-67d1-4928-8d22-d7f9267e9f9d'},
+  {title:'Lätt styrketräning i Hjalmarstugan',cn:'Hisingen健康导航活动',place:'Hälsolots Hisingen',summary:'在Hisingen健康导航的健身体验',dates:{"2026-06-01": "17:30–18:30"},aid:'d86c7a6a-a032-4266-b11d-9315680ecee3'},
+  {title:'Öppet hus årskurs 7-20år',cn:'小学开放日',place:'Stenhuset ungdomsverksamhet',summary:'在Stenhuset青年活动的开放参观日',dates:{"2026-06-01": "17:30–21:00"},aid:'d90f6182-95a9-4d00-a668-3489595d2df6'},
+  {title:'Kom och måla tillsammans!',cn:'一起来画画',place:'Frölunda Kulturhus',summary:'在Frölunda文化中心的绘画创作活动',dates:{"2026-05-28": "13:00–15:00"},aid:'d99c7697-f837-43e8-9dbc-5a380c434909'},
+  {title:'Läxhjälp i svenska - för dig med svenska som andraspråk',cn:'作业辅导',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆的免费课业辅导',dates:{"2026-06-03": "16:00–19:00"},aid:'da039892-c907-48c3-a85a-45ef03a0c6c4'},
+  {title:'Schack på Backa bibliotek!',cn:'国际象棋',place:'Backa bibliotek',summary:'在Backa图书馆的桌游或棋类活动',dates:{"2026-05-28": "16:00–18:00"},aid:'da2758f0-97ba-4d90-8ac1-88628f9ff8e4'},
+  {title:'Linedance - Kortedala',cn:'东北区社区中心活动',place:'Mötesplatser Nordost',summary:'在东北区社区中心的社区活动',dates:{"2026-05-29": "11:15–12:45"},aid:'db98e80c-6cfe-440d-86e1-91b0254c55e6'},
+  {title:'Landalakoloristerna',cn:'Landala绘画组',place:'Mötesplats Landala Kulturcenter',summary:'在Landala文化中心的社区活动',dates:{"2026-05-28": "12:30–15:00"},aid:'dbc712a4-cec3-4ee8-abef-64ff28a5517e'},
+  {title:'Pingis för alla åldrar',cn:'乒乓球',place:'Axelhuset',summary:'在Axelhuset的社区活动',dates:{"2026-06-03": "14:00–16:00"},aid:'dc1057b1-a7df-4723-a5e8-c0b3dc72b29f'},
+  {title:'Handarbetsgrupp',cn:'Lillekärr社区中心活动',place:'Mötesplats Lillekärr Södra 55 (fd mötesplats Kärra)',summary:'在Lillekärr社区中心的手工制作活动',dates:{"2026-06-02": "15:00–18:00"},aid:'dc50ac72-fcd3-4801-b901-709702087c87'},
+  {title:'Utställning: Kartläggningar',cn:'展览：Kartläggningar',place:'Frölunda Kulturhus',summary:'在Frölunda文化中心举办的艺术展览',dates:{"2026-05-29": "", "2026-05-30": "", "2026-05-31": "", "2026-05-28": ""},aid:'dd006100-56ef-44f9-9402-8e3cae2478bf'},
+  {title:'Boka danssalen (för dig 11-25 år)',cn:'预订舞蹈室',place:'](/wps/portal/kalendarium/kalendarium-start?activityId=dd8888e0-f2de-46a5-8419-b11afff83593)Kulturhuset Bergsjön',summary:'在Bergsjön文化中心的舞蹈课程',dates:{"2026-05-28": "15:00–19:00"},aid:'dd8888e0-f2de-46a5-8419-b11afff83593'},
+  {title:'Spela bingo tillsammans!',cn:'宾果游戏',place:'Mötesplats S:t Gabriel Tynnered',summary:'在Tynnered社区中心的社交宾果游戏',dates:{"2026-06-02": "11:15–12:15"},aid:'de8fa11c-54ea-4ff1-aff0-040d0c8257d5'},
+  {title:'KulturPilen - Öppen verksamhet - 10 -12 år',cn:'文化之箭活动',place:'Kulturskolan Göteborg och Fritid i sydväst',summary:'在哥德堡文化学校的文化活动',dates:{"2026-05-28": "14:00–17:00"},aid:'dedad719-a320-4b5d-b21a-5e1fb575add1'},
+  {title:'Solvisning på Slottsskogsobservatoriet',cn:'Slottsskogen公园活动',place:'Slottsskogen',summary:'在Slottsskogen公园的社区活动',dates:{"2026-05-30": "14:00–15:00"},aid:'df506bd5-0cfc-4a60-81f1-a99795428659'},
+  {title:'Träning för transpersoner och ickebinära',cn:'东北区健康中心活动',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的健身体验',dates:{"2026-06-03": "16:00–17:00"},aid:'dfe4335d-eaec-46ff-aaf2-174f631d5ffe'},
+  {title:'Drop in med kaffe för dig som är senior!',cn:'长者咖啡聚会',place:'Mötesplats Kålltorp',summary:'在kålltorp社区中心的长者社交活动',dates:{"2026-06-03": "11:00–14:00"},aid:'dfe9718d-1728-499e-a646-228156568aca'},
+  {title:'Mötesplats MIM',cn:'MIM Kunskapscentrum活动',place:'MIM Kunskapscentrum',summary:'在MIM Kunskapscentrum的社区活动',dates:{"2026-05-29": "17:00–20:00"},aid:'dffba854-0773-4a75-9db6-5a7ce6f30903'},
+  {title:'Drop-in: DigiHjälp på Frölunda bibliotek',cn:'Frölunda图书馆活动',place:'Frölunda bibliotek',summary:'在Frölunda图书馆的图书馆活动',dates:{"2026-06-03": "10:30–12:00"},aid:'e064545a-3aec-46c1-a0dd-291601ebe004'},
+  {title:'Träna svenska med volontärer',cn:'Majorna图书馆活动',place:'Majornas bibliotek',summary:'在Majorna图书馆的社区活动',dates:{"2026-06-01": "16:30–18:30"},aid:'e0efea58-9d7c-4b93-934c-cbf60e250e8f'},
+  {title:'Vill du testa på att dj:a?',cn:'DJ体验',place:'Kulturrummet Gårdsten',summary:'在Gårdsten文化空间的社区活动',dates:{"2026-05-29": "", "2026-05-30": "", "2026-05-31": "", "2026-05-28": ""},aid:'e106c235-b35a-46ba-8869-dd71470718e6'},
+  {title:'Öppet gym, Geråshallen',cn:'开放健身房',place:'Geråshallen',summary:'在Geråshallen的社区活动',dates:{"2026-06-01": "14:00–15:00"},aid:'e19e1b1f-17c4-43b3-878f-72d16abdb362'},
+  {title:'Quiz: Oldies but goldies (13-25 år)',cn:'市立图书馆活动',place:'](/wps/portal/kalendarium/kalendarium-start?activityId=e1ae6495-9b4a-4387-b8ed-57be0a15609e)Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆的社区活动',dates:{"2026-05-29": "17:00–18:00"},aid:'e1ae6495-9b4a-4387-b8ed-57be0a15609e'},
+  {title:'Seniorträffar i Hjällbo',cn:'长者聚会',place:'Mötesplatser Nordost',summary:'在东北区社区中心的长者社交活动',dates:{"2026-06-03": "10:30–12:00"},aid:'e2659758-6b58-4649-bad9-6bdb4102c62f'},
+  {title:'Kinesisk hälsogymnastik',cn:'Verket社区中心活动',place:'Mötesplats Verket',summary:'在Verket社区中心的社区活动',dates:{"2026-06-01": "13:30–14:15"},aid:'e2b74e13-6ea1-446e-b1eb-aa9a5d6fcfd4'},
+  {title:'Cirkusworkshop med Cirkus Cirkör',cn:'Kåken文化中心活动',place:'Kulturhuset Kåken',summary:'在Kåken文化中心的社区活动',dates:{"2026-05-31": "14:00–15:15"},aid:'e2e46440-bf76-4b71-b29f-7835858fab3e'},
+  {title:'Drop in med kaffe',cn:'长者咖啡聚会',place:'Mötesplats Kaggeled',summary:'在kaggeled社区中心的咖啡社交聚会',dates:{"2026-06-03": "11:15–12:00"},aid:'e4612584-4fd4-4199-9967-36bc0fa02bff'},
+  {title:'Spela bingo tillsammans!',cn:'宾果游戏',place:'Mötesplats S:t Gabriel Tynnered',summary:'在Tynnered社区中心的社交宾果游戏',dates:{"2026-05-28": "11:15–12:15"},aid:'e47c50ed-e816-47e5-bda7-2598a51d4a30'},
+  {title:'Library Sessions: Cecilia Callersten med band',cn:'Lagerhuset图书馆活动',place:'Lagerhusets Bibliotek',summary:'在Lagerhuset图书馆的社区活动',dates:{"2026-05-30": "17:00–18:30"},aid:'e484a8d5-bec1-4b66-bc66-a300dc77889e'},
+  {title:'Fråga logopeden på Öppna förskolan i Hjällbo',cn:'Socialförvaltningen 活动',place:'Socialförvaltningen Nordost',summary:'在Socialförvaltningen 的社区活动',dates:{"2026-06-01": "10:00–12:00"},aid:'e5254787-dfa8-4e5a-9341-b7cd6ee494ff'},
+  {title:'Sagostund',cn:'故事时间',place:'Torslanda bibliotek',summary:'在Torslanda图书馆的儿童故事朗读',dates:{"2026-05-29": "10:30–11:00"},aid:'e55dddd2-6d0f-4d23-92cd-d2769cc81c17'},
+  {title:'Gympa',cn:'健身操',place:'Mötesplats Kåken',summary:'在kåken社区中心的免费健身操课程',dates:{"2026-06-01": "10:30–11:15"},aid:'e5d6afe4-97e8-469f-a776-c9d46dc2ea9b'},
+  {title:'Yoga för kvinnor i Högsbohöjd',cn:'体育与协会管理局活动',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的免费瑜伽课程',dates:{"2026-06-01": "16:45–17:45"},aid:'e69ec885-99a3-4f8d-971e-5d66cb5dcc26'},
+  {title:'Funktionell träning på Lundbybadet',cn:'功能性训练',place:'Hälsolots Hisingen',summary:'在Hisingen健康导航的健身体验',dates:{"2026-05-28": "14:00–15:00"},aid:'e768fe7d-64e3-4f6d-91b5-add548731fa0'},
+  {title:'Träning för hela kroppen',cn:'Växthuset温室活动',place:'Växthuset',summary:'在Växthuset温室的健身体验',dates:{"2026-06-03": "09:30–10:30"},aid:'e77e4a0e-937f-46c5-b23c-dd12a9f273a9'},
+  {title:'Tysta klubben',cn:'安静俱乐部',place:'Askims bibliotek',summary:'在Askim图书馆的社区活动',dates:{"2026-05-28": "17:00–17:30"},aid:'e7fd0f53-703a-426d-925c-e64eb6f74f00'},
+  {title:'Mamma mu-sagostund',cn:'故事时间',place:'Backa bibliotek',summary:'在Backa图书馆的儿童故事朗读',dates:{"2026-05-30": "10:00–10:40"},aid:'e7feb726-5d31-4f31-8cd0-403afd85078f'},
+  {title:'Promenad',cn:'东北区健康中心活动',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的社区活动',dates:{"2026-06-01": "10:30–11:20"},aid:'e8112bef-db82-4946-a775-db92335e0a68'},
+  {title:'Gratis återhämtningsyoga i Grindstugan',cn:'体育与协会管理局活动',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的免费瑜伽课程',dates:{"2026-06-03": "17:30–18:30"},aid:'e82d012c-45c7-4a55-9464-f744ce37905b'},
+  {title:'Så ett frö',cn:'Verket社区中心活动',place:'Mötesplats Verket',summary:'在Verket社区中心的社区活动',dates:{"2026-06-02": "11:30–13:30"},aid:'e82f0882-235e-4c63-a595-efedc46baf4e'},
+  {title:'Junior Bassäng 9-13 år, Lundbybadet',cn:'Lundby游泳馆活动',place:'Lundbybadet',summary:'在Lundby游泳馆的社区活动',dates:{"2026-06-02": "16:00–17:00"},aid:'e86d18ce-c597-4c89-9461-0f3268ee8351'},
+  {title:'Utställning: HDK-Valand – Ligger på marken, tittar upp',cn:'展览：HDK-Valand',place:'Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆举办的艺术展览',dates:{"2026-05-29": "10:00–20:00"},aid:'e8d98029-f39b-4204-b748-50dc4b052ceb'},
+  {title:'Canasta',cn:'kaggeled社区中心活动',place:'Mötesplats Kaggeled',summary:'在kaggeled社区中心的社区活动',dates:{"2026-06-01": "10:30–13:00"},aid:'e934cdde-beb7-4ed9-8792-755c6ccb2c4b'},
+  {title:'Tipspromenad',cn:'问答散步',place:'Mötesplats Björkekärr',summary:'在Björkekärr社区中心的社区活动',dates:{"2026-05-28": "13:00–14:30"},aid:'e97b6be0-5977-4677-bcdd-f488d06df579'},
+  {title:'Bokcirkel: Eurotrash',cn:'读书会',place:'Angereds bibliotek',summary:'在Angered图书馆的社区活动',dates:{"2026-06-01": "11:00–13:00"},aid:'eb876891-c1cf-4396-82b4-541104c3fcdb'},
+  {title:'Öppen tjejträning - Fotboll',cn:'足球活动',place:'Marieholm IK',summary:'在Marieholm IK的健身体验',dates:{"2026-05-31": "12:00–13:30"},aid:'ec515602-f56a-4150-8e9a-148b476f7aac'},
+  {title:'Prägla figurer i mässing: Workshop för dig 6-12 år',cn:'Lagerhuset图书馆活动',place:'Lagerhusets Bibliotek',summary:'在Lagerhuset图书馆的社区活动',dates:{"2026-05-31": "13:00–14:30"},aid:'ecdb2e6c-bd37-48a5-8a13-df533179b90d'},
+  {title:'Småkul i positivparken -sagostund',cn:'故事时间',place:'Positivet i Positivparken',summary:'在Positivet i Positivp的儿童故事朗读',dates:{"2026-06-01": "11:00–11:20"},aid:'ed2db8bd-101e-41f9-a4bd-9c0ef66f18c1'},
+  {title:'Pyssel!',cn:'Tuve图书馆活动',place:'Tuve bibliotek',summary:'在Tuve图书馆的社区活动',dates:{"2026-06-03": "14:30–16:30"},aid:'ed544200-c15d-4de2-9774-0d74fe44ebca'},
+  {title:'Digitala torsdagar',cn:'数字星期四',place:'Lundby bibliotek',summary:'在Lundby图书馆的数字技能支持',dates:{"2026-05-28": "16:00–17:00"},aid:'eef41d11-41e9-4d61-8a4d-fbcac7d3de3a'},
+  {title:'Träning för kvinnor i Zirkonhallen, Opalkyrkan',cn:'体育与协会管理局活动',place:'Idrotts- och föreningsförvaltningen',summary:'在体育与协会管理局的健身体验',dates:{"2026-06-02": "10:00–10:50"},aid:'effa6869-4dc1-446c-8fce-406647ec12d1'},
+  {title:'Språkkafé',cn:'语言咖啡馆（Frölunda图书馆）',place:'Frölunda bibliotek',summary:'在Frölunda图书馆练习瑞典语会话',dates:{"2026-05-28": "17:00–18:30"},aid:'f02527ba-3271-48a1-97fd-ce7b36f88355'},
+  {title:'Pingis',cn:'乒乓球',place:'Community center Brunnsbo',summary:'在Community center Bru的社区活动',dates:{"2026-05-29": "17:00–18:00"},aid:'f0924fbb-3d35-4001-8eef-38e6bdf16495'},
+  {title:'Helgidrott i Torpahallen',cn:'IBK Göteborg och Kai活动',place:'IBK Göteborg och Kaidi Taekwondo och e-sport',summary:'在IBK Göteborg och Kai的社区活动',dates:{"2026-05-30": "18:00–22:00"},aid:'f1191cca-25b6-4427-aadc-b7734b2289db'},
+  {title:'Mindful Qigong',cn:'气功训练',place:'Mötesplats Kallebäck',summary:'在Kallebäck社区中心的社区活动',dates:{"2026-05-29": "10:30–11:30"},aid:'f26cfeb6-c31b-40bb-a2f0-80feb166c61e'},
+  {title:'Öppen verksamhet - Torsdag',cn:'开放活动',place:'Bergsjögårdens mötesplats',summary:'在Bergsjögården社区的社区活动',dates:{"2026-05-28": ""},aid:'f29e422a-c69c-4339-8279-d48baaaa44a5'},
+  {title:'Backadagen på Selma Lagerlöfs torg',cn:'Sommarunderhållninge活动',place:'Sommarunderhållningen',summary:'在Sommarunderhållninge的社区活动',dates:{"2026-05-30": "11:00–14:00"},aid:'f2fd50a8-510d-4bed-9286-67adbaeb51a7'},
+  {title:'Familjeträning i Guldheden',cn:'家庭训练',place:'Socialförvaltningen Centrum',summary:'在Socialförvaltningen 的健身体验',dates:{"2026-06-03": "17:00–18:00"},aid:'f3771ab7-c202-4de6-bff1-219ad7b9f522'},
+  {title:'Upptäck glädjen i Rummikub!',cn:'Rummikub桌游',place:'Mötesplats Backa',summary:'在Backa社区中心的社区活动',dates:{"2026-05-28": "10:00–12:00"},aid:'f3b35c56-4ba6-4cbe-81f3-aed80026d623'},
+  {title:'Musikunderhållning',cn:'音乐娱乐',place:'Mötesplats Lunden',summary:'在Lunden社区中心的音乐演出活动',dates:{"2026-05-29": "12:30–13:00"},aid:'f488b453-f212-453a-9e2c-858c4589aa41'},
+  {title:'Informationsmöte Marin kolonilott på Styrsö',cn:'海洋种植信息会',place:'Stadsnära odling',summary:'在城市农耕的社区活动',dates:{"2026-05-28": "17:30–20:15"},aid:'f4bffc80-60b2-45af-9902-34a811bcda88'},
+  {title:'Social gemenskap med volontär på mötesplats Tuve',cn:'社交聚会',place:'Mötesplats Tuve',summary:'在Tuve社区中心的社区活动',dates:{"2026-05-28": "10:00–13:00"},aid:'f4d53a13-31fa-4c5a-8940-293c76fbcfc1'},
+  {title:'Träna med smärta',cn:'Hisingen健康导航活动',place:'Hälsolots Hisingen',summary:'在Hisingen健康导航的社区活动',dates:{"2026-06-03": "10:30–11:30"},aid:'f4f000a7-ea94-4677-a98e-e71495a62652'},
+  {title:'Handarbetstorsdag',cn:'手工星期四',place:'Lundby bibliotek',summary:'在Lundby图书馆的手工制作活动',dates:{"2026-05-28": "16:00–18:00"},aid:'f57d1f3b-9f4e-4dfc-9bd7-d1695ff2aa64'},
+  {title:'Inomhusboule',cn:'法式滚球',place:'Mötesplats Askim',summary:'在Askim社区中心的社区活动',dates:{"2026-05-28": "13:00–15:00"},aid:'f6b198cb-619a-42e5-9238-bea62f597496'},
+  {title:'Handarbetscafé',cn:'手工咖啡馆',place:'Mötesplats Kallebäck',summary:'在Kallebäck社区中心的手工制作活动',dates:{"2026-05-29": "13:00–15:00"},aid:'f71f2d5c-d1e0-4722-84e3-65d11ba7f353'},
+  {title:'Musikunderhållning',cn:'音乐娱乐',place:'Mötesplats Högsbo',summary:'在högsbo社区中心的音乐演出活动',dates:{"2026-05-29": "11:00–11:30"},aid:'f7210f7d-6869-4ba5-baf4-80b817d91838'},
+  {title:'Källkritik i vardagen',cn:'Vintergatan社区中心活动',place:'Mötesplats Vintergatan 1',summary:'在Vintergatan社区中心的社区活动',dates:{"2026-06-02": "13:00–14:00"},aid:'f73ed578-88e9-4e8f-855e-c73a54599660'},
+  {title:'Textillördag - Screentryck med Nina (Vuxna från 18 år)',cn:'Bergsjön文化中心活动',place:'](/wps/portal/kalendarium/kalendarium-start?activityId=f86882b8-7677-4d56-b0fd-7a49db9947d2)Kulturhuset Bergsjön',summary:'在Bergsjön文化中心的社区活动',dates:{"2026-05-30": "14:30–16:30"},aid:'f86882b8-7677-4d56-b0fd-7a49db9947d2'},
+  {title:'Sittgympa och balansträning',cn:'健身操',place:'Mötesplats Framnäs',summary:'在Framnäs社区中心的免费健身操课程',dates:{"2026-05-28": "12:00–12:30"},aid:'f8f2c13e-721b-4d92-99e7-c47c01dd36ba'},
+  {title:'Sticka & snacka',cn:'Frölunda文化中心活动',place:'Frölunda Kulturhus',summary:'在Frölunda文化中心的手工制作活动',dates:{"2026-06-03": "15:30–18:00"},aid:'f981547e-91c0-4f48-b8d2-1a4a85b1c203'},
+  {title:'Musik-å-fik',cn:'音乐与咖啡',place:'Mötesplats Framnäs',summary:'在Framnäs社区中心的音乐演出活动',dates:{"2026-05-28": "13:00–14:30"},aid:'fa4129aa-1c10-4f29-9274-7f696ba9bb36'},
+  {title:'Bebismåleri',cn:'Kåken文化中心活动',place:'Kulturhuset Kåken',summary:'在Kåken文化中心的社区活动',dates:{"2026-06-01": "09:30–11:30"},aid:'fa5292b8-443d-43c8-bce8-ef5e452d651c'},
+  {title:'Öppet hus årskurs 7-20år',cn:'小学开放日',place:'Stenhuset ungdomsverksamhet',summary:'在Stenhuset青年活动的开放参观日',dates:{"2026-05-29": "17:30–21:00"},aid:'fa6574c1-01e4-47a1-bf5a-08d234ca573b'},
+  {title:'Junior landträning 9-13 år, Lundbybadet',cn:'Lundby游泳馆活动',place:'Lundbybadet',summary:'在Lundby游泳馆的健身体验',dates:{"2026-06-01": "16:00–17:00"},aid:'fa9d6cec-896d-4e4b-90c8-47254984b045'},
+  {title:'Fikaträff',cn:'东北区健康中心活动',place:'Hälsoteket i Nordost',summary:'在东北区健康中心的社区活动',dates:{"2026-06-02": "14:30–15:30"},aid:'fc6e3901-e018-4c66-9c10-29d038aae774'},
+  {title:'Teaterföreställning Mens (inspelad version)',cn:'戏剧演出',place:'](/wps/portal/kalendarium/kalendarium-start?activityId=fcfe95b2-551d-48af-8bc3-bd33502a7d6e)Stadsbiblioteket på Götaplatsen',summary:'在市立图书馆的桌游或棋类活动',dates:{"2026-05-28": "18:00–19:00"},aid:'fcfe95b2-551d-48af-8bc3-bd33502a7d6e'},
+  {title:'Våren i Actionpark',cn:'Actionpark春季活动',place:'Actionparken (bemannad plats)',summary:'在Action公园的社区活动',dates:{"2026-05-29": "", "2026-05-30": "", "2026-05-31": "", "2026-05-28": ""},aid:'fda9fffd-b481-4d0b-acc4-b289a10e9a93'},
+  {title:'Bygg på Bygglekplatsen',cn:'建筑乐园玩耍',place:'Bygglekplatsen i Biskopsgården',summary:'在Biskopsgården建筑乐园的社区活动',dates:{"2026-06-02": "13:00–17:00"},aid:'fe2c372b-5a53-40f2-b5fb-7a8dadfec51c'},
+  {title:'Sång och musik',cn:'歌唱与音乐',place:'Mötesplats Kyrkbytorget 6',summary:'在Kyrkbytorget社区中心的音乐演出活动',dates:{"2026-05-28": "12:30–14:00"},aid:'feef4ee9-316d-47b3-a89a-0b1bfa5caf07'},
+];
+// ========== CN LOOKUP helpers ==========
+const m1CnLookup = {}; for (const e of EVENT_DATA) { if (e.slug) m1CnLookup[e.slug] = {cn:e.cn,summary:e.summary}; }
+const m2CnLookup = {}; for (const e of KOMPIS_DATA) { if (e.slug) m2CnLookup[e.slug] = {cn:e.cn||e.title.split(' / ')[1]||'',summary:e.summary}; }
+const m3CnLookup = {}; for (const e of GBG_SAMPLE) { if (e.aid) m3CnLookup[e.aid] = {cn:e.cn,summary:e.summary}; }
+
+// ========== Real-time Chinese translation via Google ==========
+const TRANS_CACHE = {};
+
+function getCnForEvent(title, org, lookup, lookupKey) {
+  const cached = lookup[lookupKey];
+  if (cached && cached.cn) return { cn: cached.cn, summary: cached.summary };
+  return { cn: '', summary: '', needsTranslation: true };
+}
+
+async function translateViaGoogle(text) {
+  if (TRANS_CACHE[text]) return TRANS_CACHE[text];
+  try {
+    const resp = await fetch(
+      `https://translate.googleapis.com/translate_a/single?client=gtx&sl=sv&tl=zh-CN&dt=t&q=${encodeURIComponent(text)}`
+    );
+    if (resp.ok) {
+      const data = await resp.json();
+      const result = (data[0] && data[0][0] && data[0][0][0]) || '';
+      TRANS_CACHE[text] = result;
+      return result;
+    }
+  } catch(e) {}
+  return '';
+}
+
+async function enrichEvents(events, lookup, lookupKeyFn) {
+  const promises = [];
+  for (const e of events) {
+    if (e.cn && e.summary) continue;
+    const key = lookupKeyFn(e);
+    const cached = lookup[key];
+    if (cached && cached.cn) { e.cn = cached.cn; e.summary = cached.summary; continue; }
+    promises.push((async () => {
+      const cn = await translateViaGoogle(e.title);
+      if (cn) {
+        e.cn = cn;
+        e.summary = await translateViaGoogle((e.place || '') + ' - ' + e.title);
+        if (e.cn) lookup[key] = { cn: e.cn, summary: e.summary };
+      }
+    })());
+  }
+  await Promise.allSettled(promises);
+}
+
+
+
+
+
+let gbgEvents = [];
+let isFetchingGbg = false;
+
+async function fetchGbgEvents() {
+  if (isFetchingGbg) return;
+  isFetchingGbg = true;
+  
+  const btn = document.getElementById('fetchGbgBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 获取中...';
+  
+  const gbgDate = document.getElementById('gbgDate').value || '2026-05-28';
+  
+  const pc = document.getElementById('gbgProgressContainer');
+  const pf = document.getElementById('gbgProgressFill');
+  const pt = document.getElementById('gbgProgressText');
+  const pd = document.getElementById('gbgProgressDetail');
+  
+  pc.classList.add('show');
+  pf.style.width = '0%';
+  pt.textContent = `正在查询 ${gbgDate} 的活动...`;
+  pd.textContent = '连接 goteborg.se ...';
+  
+  gbgEvents = [];
+  
+  try {
+    const workerUrl = 'https://plain-meadow-437c.dishkun2012.workers.dev/api/gbg';
+    const seen = new Set();
+    
+    // Fetch pages until no more events
+    for (let page = 0; page < 20; page++) {
+      const resp = await fetch(`${workerUrl}?date=${gbgDate}&page=${page}`);
+      if (!resp.ok) break;
+      const html = await resp.text();
+      
+      // Parse activity cards
+      const blocks = html.split('data-testid="kalendarium-activity"');
+      if (blocks.length < 2 && page > 0) break;
+      
+      let newCount = 0;
+      for (const block of blocks.slice(1)) {
+        const aidM = block.match(/activityId=([a-f0-9-]+)/);
+        if (!aidM) continue;
+        const aid = aidM[1];
+        if (seen.has(aid)) continue;
+        seen.add(aid);
+        
+        const titleM = block.match(/class="c-card__title-link"[^>]*>([^<]+)</);
+        const orgM = block.match(/class="c-card__byline">([^<]+)</);
+        const timeM = block.match(/<dd class="c-label-value-list__value">([^<]+)<\/dd>/g);
+        
+        const title = titleM ? titleM[1].trim() : '';
+        const org = orgM ? orgM[1].trim() : '';
+        const timeVals = timeM ? timeM.map(m => m.match(/>([^<]+)</)[1].trim()) : [];
+        const time = timeVals.length > 1 ? timeVals[1] : (timeVals[0] || '');
+        
+        const cnInfo = getCnForEvent(title, org, m3CnLookup, aid);
+        gbgEvents.push({title, date: gbgDate, time, place: org, aid, cn:cnInfo.cn, summary:cnInfo.summary});
+        newCount++;
+      }
+      
+      if (newCount === 0) break;
+      
+      pf.style.width = Math.min(100, Math.round(((page+1)/10)*100)) + '%';
+      pt.textContent = `已获取第 ${page+1} 页`;
+      pd.textContent = `已找到 ${gbgEvents.length} 个活动`;
+      await sleep(50);
+    }
+    
+    if (gbgEvents.length === 0) throw new Error('No events');
+    pf.style.width = '100%';
+    pt.textContent = `✅ 完成！${gbgDate} 共 ${gbgEvents.length} 个活动（实时）`;
+  } catch (e) {
+    console.log('Proxy unavailable:', e.message);
+    pt.textContent = '无法连接，使用本地缓存...';
+    
+    const filtered = [];
+    for (const ev of GBG_SAMPLE) {
+      for (const [d, t] of Object.entries(ev.dates)) {
+        if (d === gbgDate) filtered.push({...ev, date: d, time: t || ''});
+      }
+    }
+    for (let i = 0; i < filtered.length; i++) {
+      gbgEvents.push(filtered[i]);
+      pf.style.width = Math.round(((i+1)/filtered.length)*100) + '%';
+      await sleep(20);
+    }
+    pt.textContent = `✅ 完成！${gbgDate} 共 ${gbgEvents.length} 个活动（缓存）`;
+  }
+  pd.textContent = '数据来自 goteborg.se';
+  
+  btn.disabled = false;
+  btn.innerHTML = '🔄 重新获取';
+  isFetchingGbg = false;
+  
+  await enrichEvents(gbgEvents, m3CnLookup, e => e.aid).catch(() => {});
+  updateGbgStats();
+  delete renderPages['gbgEventsContainer'];
+  markModuleLoaded('gbgEventsContainer');
+  renderGbgEvents();
+}
+
+function renderGbgEvents() {
+  const container = document.getElementById('gbgEventsContainer');
+  const statsBar = document.getElementById('gbgStatsBar');
+  
+  if (gbgEvents.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="icon">🔍</div><p>所选日期范围内没有找到活动</p></div>';
+    statsBar.classList.add('show');
+    return;
+  }
+  
+  statsBar.classList.add('show');
+  
+  const shown = renderPages['gbgEventsContainer'] || 0;
+  const batch = gbgEvents.slice(0, shown + PAGE_SIZE);
+  renderPages['gbgEventsContainer'] = batch.length;
+  
+  const groups = {};
+  for (const e of batch) {
+    if (!groups[e.date]) groups[e.date] = [];
+    groups[e.date].push(e);
+  }
+  
+  const sortedDates = Object.keys(groups).sort();
+  
+  let html = '';
+  for (const dateStr of sortedDates) {
+    const dayEvents = groups[dateStr];
+    const d = new Date(dateStr);
+    html += `
+    <div class="date-group">
+      <div class="date-label">
+        📅 ${d.getMonth()+1}月${d.getDate()}日 ${['周日','周一','周二','周三','周四','周五','周六'][d.getDay()]}
+        <span class="count">${dayEvents.length}</span>
+      </div>`;
+    
+    for (const e of dayEvents) {
+      const linkUrl = `https://goteborg.se/wps/portal/kalendarium/kalendarium-start?activityId=${e.aid}`;
+      const cnDisplay = e.cn ? ` <span class="cn">/ ${e.cn}</span>` : '';
+      
+      html += `
+      <div class="event-card">
+        <div class="event-title">
+          <a href="${linkUrl}" target="_blank" rel="noopener">${e.title}${cnDisplay}</a>
+        </div>
+        <div class="event-meta">
+          <span>⏰ ${e.time || '全天'}</span>
+          <span>📍 ${e.place}</span>
+        </div>
+        ${e.summary ? `<div class="event-summary">📝 ${e.summary}</div>` : ''}
+      </div>`;
+    }
+    html += '</div>';
+  }
+  
+  if (gbgEvents.length > batch.length) html += '<button class="load-more-btn" onclick="loadMoreGbg()">📥 继续浏览更多活动 (' + batch.length + ' 已显示)...</button>';
+  container.innerHTML = html;
+  updateGbgStats();
+}
+
+function loadMoreGbg() { renderGbgEvents(); }
+
+function updateGbgStats() {
+  document.getElementById('gbgStatTotal').textContent = gbgEvents.length;
+}
+</script>
+
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js');
+}
+</script>
+</body>
+</html>
