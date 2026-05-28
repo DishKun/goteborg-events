@@ -2,7 +2,7 @@
   "name": "哥德堡活动",
   "short_name": "哥德堡活动",
   "description": "Gothenburg events calendar - 哥德堡实时活动日历",
-  "start_url": "/",
+  "start_url": "./",
   "display": "standalone",
   "background_color": "#f0f4f8",
   "theme_color": "#1e3a5f",
