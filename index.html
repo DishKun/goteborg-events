@@ -307,10 +307,10 @@
 
 <div class="controls" style="flex-wrap:wrap;gap:0.6rem">
   <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.9rem;color:#475569">
-    起始日 <input type="date" id="m1StartDate" value="2026-05-28" style="padding:0.4rem 0.6rem;border:1px solid #cbd5e1;border-radius:6px;font-size:0.9rem">
+    起始日 <input type="date" id="m1StartDate" style="padding:0.4rem 0.6rem;border:1px solid #cbd5e1;border-radius:6px;font-size:0.9rem">
   </label>
   <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.9rem;color:#475569">
-    结束日 <input type="date" id="m1EndDate" value="2026-06-03" style="padding:0.4rem 0.6rem;border:1px solid #cbd5e1;border-radius:6px;font-size:0.9rem">
+    结束日 <input type="date" id="m1EndDate" style="padding:0.4rem 0.6rem;border:1px solid #cbd5e1;border-radius:6px;font-size:0.9rem">
   </label>
   <button class="btn btn-primary" id="fetchBtn" onclick="fetchEvents()">
     🔄 获取哥德堡活动
@@ -381,7 +381,7 @@
 
 <div class="controls" style="flex-wrap:wrap;gap:0.6rem">
   <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.9rem;color:#475569">
-    日期 <input type="date" id="gbgDate" value="2026-05-28" style="padding:0.4rem 0.6rem;border:1px solid #cbd5e1;border-radius:6px;font-size:0.9rem">
+    日期 <input type="date" id="gbgDate" style="padding:0.4rem 0.6rem;border:1px solid #cbd5e1;border-radius:6px;font-size:0.9rem">
   </label>
   <button class="btn btn-primary" id="fetchGbgBtn" onclick="fetchGbgEvents()" style="background:#3b6e1e">
     🔄 获取市政府活动
@@ -768,6 +768,17 @@ function addLoadMoreButton(containerId, html, hasMore) {
 function loadMore(containerId) {
   if (loadMoreCallbacks[containerId]) loadMoreCallbacks[containerId]();
 }
+// Set dynamic date defaults
+function setDateDefaults() {
+  const today = new Date();
+  const todayStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
+  const week = new Date(today); week.setDate(week.getDate()+7);
+  const weekStr = week.getFullYear() + '-' + String(week.getMonth()+1).padStart(2,'0') + '-' + String(week.getDate()).padStart(2,'0');
+  document.getElementById('m1StartDate').value = todayStr;
+  document.getElementById('m1EndDate').value = weekStr;
+  document.getElementById('gbgDate').value = todayStr;
+}
+setDateDefaults();
 // Wait for user to click button
 window.scrollTo(0, 0);
 
