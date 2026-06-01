@@ -299,10 +299,11 @@
 <button class="sticky-collapse" id="btnM1" onclick="toggleOneModule('eventsContainer','btnM1','Gothenburg 活动')" style="bottom:20px">📋 收起Gothenburg 活动</button>
 <button class="sticky-collapse" id="btnM2" onclick="toggleOneModule('kompisEventsContainer','btnM2','Kompis 活动')" style="bottom:64px">📋 收起Kompis 活动</button>
 <button class="sticky-collapse" id="btnM3" onclick="toggleOneModule('gbgEventsContainer','btnM3','市政厅活动')" style="bottom:108px">📋 收起市政厅活动</button>
+<button class="sticky-collapse" id="btnM4" onclick="toggleOneModule('abfEventsContainer','btnM4','ABF 活动')" style="bottom:152px">📋 收起ABF 活动</button>
 
 <div class="header">
   <h1>🎭 哥德堡活动</h1>
-  <div class="subtitle">来自 gothenburg.com 的活动日历 · 选择日期查看未来活动</div>
+  <div class="subtitle">来自 gothenburg.com 的活动日历 · 选择日期查看未来活动 · <a href="https://www.goteborg.com/en/events" target="_blank" style="color:#93c5fd;text-decoration:underline">打开源网站 ↗</a></div>
 </div>
 
 <div class="controls" style="flex-wrap:wrap;gap:0.6rem">
@@ -339,10 +340,11 @@
   </div>
 </div>
 
+
 <!-- ========== 模块2: Kompis Sverige ========== -->
 <div class="header" style="margin-top:2rem;background:linear-gradient(135deg,#c0262c,#e53e3e)">
   <h1>🤝 Kompis Sverige · 哥德堡活动</h1>
-  <div class="subtitle">来自 kompissverige.se 的免费社交活动 · 结交新朋友，练习瑞典语</div>
+  <div class="subtitle">来自 kompissverige.se 的免费社交活动 · 结交新朋友，练习瑞典语 · <a href="https://kompissverige.se/en/activities/" target="_blank" style="color:#fecaca;text-decoration:underline">打开源网站 ↗</a></div>
 </div>
 
 <div class="controls">
@@ -379,7 +381,7 @@
 <!-- ========== 模块3: Göteborgs Stad Kalendarium ========== -->
 <div class="header" style="margin-top:2rem;background:linear-gradient(135deg,#2d5016,#4a7c29)">
   <h1>🏛️ 哥德堡市政府活动日历</h1>
-  <div class="subtitle">来自 goteborg.se 的官方活动日历 · 选择日期查看当天活动</div>
+  <div class="subtitle">来自 goteborg.se 的官方活动日历 · 选择日期查看当天活动 · <a href="https://goteborg.se/wps/portal/kalendarium/kalendarium-start" target="_blank" style="color:#bbf7d0;text-decoration:underline">打开源网站 ↗</a></div>
 </div>
 
 <div class="controls" style="flex-wrap:wrap;gap:0.6rem">
@@ -408,6 +410,26 @@
   </div>
 </div>
 
+<!-- ========== 模块4: ABF 课程与活动 ========== -->
+<div class="header" style="margin-top:2rem;background:linear-gradient(135deg,#d80811,#b0060e)">
+  <h1>📚 ABF 课程与活动 · 哥德堡</h1>
+  <div class="subtitle">来自 ABF Väst 的民间教育课程与文化活动 · <a href="https://www.abf.se/vast/kurs-sok/" target="_blank" style="color:#fecaca;text-decoration:underline">打开源网站 ↗</a></div>
+</div>
+<div class="controls" style="flex-wrap:wrap;gap:0.6rem">
+  <button class="btn btn-primary" id="fetchAbfKurser" onclick="fetchAbfKurser()" style="background:#b0060e">📖 获取课程（Kurser）</button>
+  <button class="btn btn-outline" id="fetchAbfEvent" onclick="fetchAbfEvent()" style="border-color:#b0060e;color:#b0060e">🎭 获取活动（Evenemang）</button>
+</div>
+<div class="progress-container" id="abfProgressContainer">
+  <div class="progress-bar"><div class="progress-fill" id="abfProgressFill"></div></div>
+  <div class="progress-text" id="abfProgressText">准备中...</div>
+  <div class="progress-detail" id="abfProgressDetail"></div>
+</div>
+<div class="stats-bar" id="abfStatsBar">
+  <div class="stat"><span class="emoji">📊</span> 共 <strong id="abfStatTotal">0</strong> 个</div>
+</div>
+<div class="container" id="abfEventsContainer">
+  <div class="empty-state"><div class="icon">📚</div><p>👆 点击「获取课程」或「获取活动」按钮</p></div>
+</div>
 <script>
 // ========== EVENT DATA ==========
 // Pre-loaded data from api.goteborg.com/v1/events for 2026-05-28 to 2026-06-03
@@ -782,7 +804,16 @@ function setDateDefaults() {
   document.getElementById('gbgDate').value = todayStr;
 }
 setDateDefaults();
-// Wait for user to click button
+function setDateDefaults() {
+  const today = new Date();
+  const todayStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
+  const week = new Date(today); week.setDate(week.getDate()+7);
+  const weekStr = week.getFullYear() + '-' + String(week.getMonth()+1).padStart(2,'0') + '-' + String(week.getDate()).padStart(2,'0');
+  document.getElementById('m1StartDate').value = todayStr;
+  document.getElementById('m1EndDate').value = weekStr;
+  document.getElementById('gbgDate').value = todayStr;
+}
+setDateDefaults();
 window.scrollTo(0, 0);
 
 // ========== MODULE 2: KOMPIS SVERIGE ==========
@@ -1849,6 +1880,121 @@ function updateGbgStats() {
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js');
 }
+// ========== MODULE 4: ABF VÄST ==========
+const ABF_KURSER = [
+  {title:"Lär dig grunderna i datoranvändning och Office-paketet!",cn:"了解计算和 Office 套件的基础知识！",times:"5 gånger",start:"2026-06-04",time:"13:00 - 16:00",place:"ABC Skolspåret 33, Skolspåret 33 Angered",free:true,price:"",slug:"data-abc-datakunskap-ons-tors-13-16-3927658"},
+  {title:"Lär dig svenska i din egen takt - Språk ABC",cn:"按照自己的节奏学习瑞典语 - Language ABC",times:"5 gånger",start:"2026-06-04",time:"09:00 - 12:00",place:"ABC Skolspåret 33, Skolspåret 33 Angered",free:true,price:"",slug:"sprak-abc-svenska-onsdag-torsdag-0900-1200-3927659"},
+  {title:"Sommarkurs - Drejning 8-12 juni",cn:"暑期课程 - 6 月 8 日至 12 日",times:"5 gånger",start:"2026-06-08",time:"09:30 - 15:30",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-sommarkurs-2026-v24-drejning-8-12-juni-3891299"},
+  {title:"Sommarkurs - Måla i Majorna",cn:"暑期课程 - 马略纳绘画",times:"5 gånger",start:"2026-06-08",time:"10:00 - 16:15",place:"Kustens Hus, Taubegatan 9 Göteborg",free:false,price:"3700:-",slug:"konst-sommarkurs-2026-v24-mala-i-majorna-3891914"},
+  {title:"Sommarkurs - Keramik Fri form 22-26 juni",cn:"暑期课程 - 陶瓷自由形式 6 月 22 日至 26 日",times:"5 gånger",start:"2026-06-22",time:"09:30 - 15:30",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-sommarkurs-2026-v26-fri-form-22-26-juni-3913229"},
+  {title:"Sommarkurs - Drejning 29 juni-3 juli",cn:"夏季课程 - 钻探 6 月 29 日至 7 月 3 日",times:"5 gånger",start:"2026-06-29",time:"09:30 - 15:30",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-sommarkurs-2026-v27-drejning-29-juni-3-juli-3913674"},
+  {title:"Sommarkurs - Keramik på Ögat 13-15 juli",cn:"夏季课程 - Ögat 陶艺课程，7 月 13 日至 15 日",times:"5 gånger",start:"2026-07-13",time:"17:00 - 20:00",place:"ÖGAT - Östra Göteborgs Alternativa Träffpunkt, Götaholmsgatan 22 Göteborg",free:false,price:"1860:-",slug:"sommarkurs-keramik-pa-ogat-13-15-juli-2026-3894836"},
+  {title:"Sommarkurs - Makramé",cn:"夏季课程 - Macramé",times:"2 gånger",start:"2026-06-27",time:"10:00 - 16:00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1400:-",slug:"hantverk-makrame-sommarkurs-3911283"},
+  {title:"Skapa ringblommor - Cempasúchil blommor",cn:"创建万寿菊 - Cempasúchil 花",times:"5 gånger",start:"2026-06-13",time:"11:00 - 13:30",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:true,price:"",slug:"skapa-ringblommor-cempasushil-blommor-3931432"},
+  {title:"Levande Cartonería - Calaveras och Catrinas",cn:"Live Cartonería - 卡拉维拉斯和卡特里纳斯",times:"5 gånger",start:"2026-06-13",time:"11:00 - 13:15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:true,price:"",slug:"levande-cartoneria-calaveras-och-catrinas-3931509"},
+  {title:"Decoupage - dekorera med servetter",cn:"剪纸 - 用餐巾装饰",times:"4 gånger",start:"2026-06-20",time:"13:30 - 16:00",place:"ABF Väst, Göteborg",free:true,price:"",slug:"decoupage-3876339"},
+  {title:"Minne i rörelse - skapa fjärilar",cn:"运动中的记忆——创造蝴蝶",times:"5 gånger",start:"2026-06-13",time:"11:00 - 13:30",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:true,price:"",slug:"minne-i-rorelse-skapa-fjarilar-3931505"},
+  {title:"Svenska i vardagen - samtal och samhällsliv",cn:"日常生活中的瑞典语——对话和社交生活",times:"8 gånger",start:"2026-07-06",time:"09:15 - 12:30",place:"ABF Väst, Göteborg",free:true,price:"",slug:"svenska-i-vardagen-samtal-och-samhallsliv-3930802"},
+  {title:"Svenska för nybörjare - språk och gemenskap",cn:"瑞典语初学者 - 语言和社区",times:"8 gånger",start:"2026-07-06",time:"09:15 - 12:30",place:"ABF Väst, Göteborg",free:true,price:"",slug:"svenska-for-nyborjare-sprak-och-gemenskap-3930787"},
+  {title:"Lär dig bli förstådd - svensk prosodi",cn:"学会被理解——瑞典韵律",times:"8 gånger",start:"2026-07-07",time:"09:15 - 12:30",place:"ABF Väst, Göteborg",free:true,price:"",slug:"lar-dig-bli-forstadd-svensk-prosodi-3930808"},
+  {title:"Akryl Målning från Grunden - Grupp 1 (tisdagar)",cn:"丙烯画从基础开始 - 第 1 组（周二）",times:"8 gånger",start:"2026-07-06",time:"09:15 - 12:30",place:"ABF Väst, Göteborg",free:true,price:"",slug:"akrylmalning-fran-grunden-grupp-1-3932684"},
+  {title:"Akryl Målning från Grunden - Grupp 2 (onsdagar)",cn:"丙烯画从基础开始 - 第 2 组（周三）",times:"8 gånger",start:"2026-07-07",time:"09:15 - 12:30",place:"ABF Väst, Göteborg",free:true,price:"",slug:"akrylmalning-fran-grunden-grupp-2-3930926"},
+  {title:"Målning SRF onsdagar",cn:"绘画 SRF 星期三",times:"12 gånger",start:"2026-09-16",time:"10:30 - 13:30",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:true,price:"",slug:"malning-srf-onsdag-1030-3924726"},
+  {title:"Gitarr Grupp 1 - Orust",cn:"吉他组 1 - 奥鲁斯特",times:"10 gånger",start:"2026-09-22",time:"17:00 - 18:30",place:"ABF Orust, Skansvägen 4 B Svanesund",free:false,price:"1350:-",slug:"gitarr-grupp-1-orust-3911743"},
+  {title:"Gitarr Grupp 2 - Orust",cn:"吉他第二组 - 奥鲁斯特",times:"10 gånger",start:"2026-09-22",time:"18:45 - 20:15",place:"ABF Orust, Skansvägen 4 B Svanesund",free:false,price:"1350:-",slug:"gitarr-grupp-2-orust-3911803"},
+  {title:"Hantverk - förnya dina textilier",cn:"工艺品 - 更新您的纺织品",times:"8 gånger",start:"2026-09-11",time:"10:00 - 13:00",place:"Öckerö Bibliotek",free:true,price:"",slug:"fornya-dina-textilier-med-enkla-medel-3928921"},
+  {title:"Skrivarcirkel - kom igång att skriva",cn:"写作圈——开始写作",times:"8 gånger",start:"2026-10-15",time:"18:00 - 20:00",place:"Humlan, Tjörn, Wackenfeldts väg 4 Kållekärr",free:true,price:"",slug:"skrivarcirkel-kom-igang-att-skriva-alla-har-nagot-att-beratta-3927017"},
+  {title:"Hållbarhetsverkstan - spara på maten",cn:"可持续发展研讨会 - 节省食物",times:"4 gånger",start:"2026-09-01",time:"14:00 - 16:15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-spara-pa-maten-3932099"},
+  {title:"Hållbarhetsverkstan - stickning",cn:"可持续发展研讨会 - 针织",times:"4 gånger",start:"2026-09-02",time:"18:00 - 20:15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-stickning-3933341"},
+  {title:"Hållbarhetsverkstan - stickning (2)",cn:"可持续发展工作坊 - 针织 (2)",times:"4 gånger",start:"2026-09-02",time:"14:00 - 16:15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-stickning-3933339"},
+  {title:"Hållbarhetsverkstan - skapa med trasor och stuvar",cn:"可持续发展研讨会 - 用碎布和其他东西进行创作",times:"4 gånger",start:"2026-09-28",time:"14:00 - 16:15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-skapa-med-trasor-och-stuvar-3933785"},
+  {title:"Hållbarhetsverkstan - skapa med trasor och stuvar (2)",cn:"可持续发展工作坊 - 用碎布和储物件进行创作 (2)",times:"4 gånger",start:"2026-09-28",time:"18:00 - 20:15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-skapa-med-trasor-och-stuvar-3933787"},
+  {title:"Hållbarhetsverkstan - Ung Impact",cn:"可持续发展研讨会 - Young Impact",times:"4 gånger",start:"2026-09-15",time:"17:30 - 19:45",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-ung-impact-3932100"},
+  {title:"Hållbarhetsverkstan - växtfärgning",cn:"可持续发展工作坊-植物染色",times:"4 gånger",start:"2026-09-30",time:"18:00 - 20:15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-vaxtfargning-3932102"},
+  {title:"Hållbarhetsverkstan - växtfärgning (2)",cn:"可持续发展工作坊-植物着色（2）",times:"4 gånger",start:"2026-09-30",time:"14:00 - 16:15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-vaxtfargning-3932101"},
+  {title:"Hållbarhetsverkstan - fixa julen med återbruk",cn:"可持续发展研讨会 - 通过回收修复圣诞节",times:"4 gånger",start:"2026-11-25",time:"14:00 - 16:15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-fixa-julen-med-aterbruk-3932110"},
+  {title:"Hållbarhetsverkstan - fixa julen med återbruk (2)",cn:"可持续发展研讨会 - 用回收修复圣诞节 (2)",times:"4 gånger",start:"2026-11-25",time:"18:00 - 20:15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-fixa-julen-med-aterbruk-3932109"},
+  {title:"Hållbarhetsverkstan - remake av kläder",cn:"可持续发展工作坊——衣服的再造",times:"4 gånger",start:"2026-10-28",time:"18:00 - 20:15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-remake-av-klader-3932106"},
+  {title:"Hållbarhetsverkstan - remake av kläder (2)",cn:"可持续发展工作坊-服装再造(2)",times:"4 gånger",start:"2026-10-28",time:"14:00 - 16:15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-remake-av-klader-3932107"},
+];;
+
+const ABF_EVENTS = [
+  {title:'West Pride – Förbjuden kärlek i Sverige under 1900-talet',cn:'West Pride – 20世纪瑞典的禁止爱',date:'2026-06-12',time:'13:00 - 14:00',place:'Verket , Lilla Stampgatan 1A Göteborg',slug:'forelasning-forbjuden-karlek-i-sverige-under-1900-talet-med-mian-lodalen-del-av-west-pride-3922145'},
+  {title:'Föreläsning om demokrati, val och politik i Sverige på lätt svenska',cn:'关于民主、选举和瑞典政治的简单瑞典语讲座',date:'2026-06-09',time:'10:00 - 11:00',place:'Integrationsnätverk Göteborg, Vårvindsgatan 20',slug:'forelasning-med-john-harfouche-demokrati-val-och-politik-i-sverige-pa-latt-svenska-3929460'},
+  {title:'Föreläsning om demokrati, val och politik i Sverige på lätt svenska',cn:'关于民主、选举和瑞典政治的简单瑞典语讲座',date:'2026-06-03',time:'10:00 - 11:00',place:'Integrationsnätverk Göteborg, Vårvindsgatan 20',slug:'forelasning-med-klara-holmin-demokrati-val-och-politik-i-sverige-pa-latt-svenska-3929456'},
+  {title:'Föreläsning om demokrati, val och politik i Sverige på lätt svenska',cn:'关于民主、选举和瑞典政治的简单瑞典语讲座',date:'2026-06-11',time:'10:00 - 11:00',place:'Integrationsnätverk Göteborg, Vårvindsgatan 20',slug:'forelasning-med-martin-wannholt-demokrati-val-och-politik-i-sverige-pa-latt-svenska-3929465'},
+  {title:'Konsert med Totodaroto och Out of Control',cn:'Totodaroto和Out of Control的音乐会',date:'2026-07-03',time:'19:00 - 23:00',place:'Ellösparken Orust, Glimsåsvägen 11 Ellös',slug:'konsert-med-totodaroto-och-out-of-control-3922651'},
+  {title:'Konstutställning på Ellösparken',cn:'埃洛斯公园的艺术展',date:'2026-07-19',time:'15:00 - 18:00',place:'Ellösparken Orust, Glimsåsvägen 11 Ellös',slug:'konstutstallning-pa-ellosparken-3922664'},
+  {title:'Konstutställning på Ellösparken',cn:'埃洛斯公园的艺术展',date:'2026-07-26',time:'14:00 - 18:00',place:'Ellösparken Orust, Glimsåsvägen 11 Ellös',slug:'konstutstallning-med-carl-erasmie-agneta-olsdon-och-cecilia-zettersten-3922665'},
+  {title:'Konstutställning och kontsvandringar på Ellösparken',cn:'埃洛斯公园的艺术展览和漫步',date:'2026-07-16',time:'10:00 - 14:00',place:'Ellösparken Orust, Glimsåsvägen 11 Ellös',slug:'konstutstallning-med-caroline-ballantyne-norneby-cornelia-cederleuf-camilla-hyllen-marie-hoglind-3922668'},
+  {title:'Konsert med Dominique',cn:'与多米尼克的音乐会',date:'2026-06-13',time:'19:00 - 21:00',place:'Stenhuset, Djurgårdsgatan 29 Göteborg',slug:'kulturkrock-konsert-med-dominique-3931467'},
+];
+
+let abfKurserEvents = [];
+let isFetchingAbf = false;
+
+function renderAbf(containerId, data, isKurser) {
+  const container = document.getElementById(containerId);
+  const statsBar = document.getElementById('abfStatsBar');
+  if (data.length === 0) { container.innerHTML = '<div class="empty-state"><div class="icon">🔍</div><p>没有找到</p></div>'; statsBar.classList.add('show'); return; }
+  statsBar.classList.add('show');
+  const groups = {};
+  for (const e of data) { const k = isKurser ? e.start : e.date; if (!groups[k]) groups[k] = []; groups[k].push(e); }
+  let html = '';
+  for (const ds of Object.keys(groups).sort()) {
+    const de = groups[ds]; const d = new Date(ds);
+    html += '<div class="date-group"><div class="date-label">📅 '+(d.getMonth()+1)+'月'+d.getDate()+'日<span class="count">'+de.length+'</span></div>';
+    for (const e of de) {
+      const cd = e.cn ? ' <span class="cn">/ '+e.cn+'</span>' : '';
+      const lu = 'https://www.abf.se/vast/kurs/'+e.slug;
+      html += '<div class="event-card"><div class="event-title"><a href="'+lu+'" target="_blank" rel="noopener">'+e.title+cd+'</a></div><div class="event-meta">';
+      if (isKurser) html += '<span>📆 '+e.times+'</span><span>📅 '+e.start+'</span><span>⏰ '+e.time+'</span><span>📍 '+e.place+'</span>'+(e.price?'<span>💰 '+e.price+'</span>':(e.free?'<span class="badge badge-free">🆓 免费</span>':'<span class="badge badge-paid">🎫 收费</span>'));
+      else html += '<span>📅 '+e.date+'</span><span>⏰ '+e.time+'</span><span>📍 '+e.place+'</span>';
+      html += '</div></div>';
+    }
+    html += '</div>';
+  }
+  container.innerHTML = html; document.getElementById('abfStatTotal').textContent = data.length;
+}
+
+async function fetchAbfKurser() {
+  if (isFetchingAbf) return; isFetchingAbf = true;
+  const btn = document.getElementById('fetchAbfKurser'); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 获取中...';
+  const pc = document.getElementById('abfProgressContainer'); const pf = document.getElementById('abfProgressFill');
+  const pt = document.getElementById('abfProgressText'); const pd = document.getElementById('abfProgressDetail');
+  pc.classList.add('show'); pf.style.width = '0%'; pt.textContent = '正在获取 ABF 课程...';
+  abfKurserEvents = []; const total = ABF_KURSER.length;
+  for (let i = 0; i < total; i++) {
+    abfKurserEvents.push(ABF_KURSER[i]);
+    pf.style.width = Math.round(((i+1)/total)*100)+'%';
+    pt.textContent = '已加载 '+(i+1)+'/'+total+' 个课程';
+    pd.textContent = ABF_KURSER[i].cn||ABF_KURSER[i].title;
+    await sleep(80);
+  }
+  pf.style.width = '100%'; pt.textContent = '✅ 完成！共 '+total+' 个课程'; pd.textContent = '';
+  btn.disabled = false; btn.innerHTML = '📖 重新获取课程'; isFetchingAbf = false;
+  renderAbf('abfEventsContainer', abfKurserEvents, true);
+}
+
+async function fetchAbfEvent() {
+  if (isFetchingAbf) return; isFetchingAbf = true;
+  const btn = document.getElementById('fetchAbfEvent'); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 获取中...';
+  const pc = document.getElementById('abfProgressContainer'); const pf = document.getElementById('abfProgressFill');
+  const pt = document.getElementById('abfProgressText'); const pd = document.getElementById('abfProgressDetail');
+  pc.classList.add('show'); pf.style.width = '0%'; pt.textContent = '正在获取 ABF 活动...';
+  abfKurserEvents = []; const total = ABF_EVENTS.length;
+  for (let i = 0; i < total; i++) {
+    abfKurserEvents.push(ABF_EVENTS[i]);
+    pf.style.width = Math.round(((i+1)/total)*100)+'%';
+    pt.textContent = '已加载 '+(i+1)+'/'+total+' 个活动';
+    pd.textContent = ABF_EVENTS[i].cn||ABF_EVENTS[i].title;
+    await sleep(80);
+  }
+  pf.style.width = '100%'; pt.textContent = '✅ 完成！共 '+total+' 个活动'; pd.textContent = '';
+  btn.disabled = false; btn.innerHTML = '🎭 重新获取活动'; isFetchingAbf = false;
+  renderAbf('abfEventsContainer', abfKurserEvents, false);
+}
+
 </script>
 </body>
 </html>
