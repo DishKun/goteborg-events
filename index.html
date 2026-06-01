@@ -352,6 +352,9 @@
   <button class="btn btn-outline" id="filterKompisBtn" onclick="toggleKompisFilter()">
     🟢 只看可报名活动
   </button>
+  <button class="btn btn-outline" id="filterMotesplatsBtn" onclick="toggleMotesplatsFilter()">
+    🏢 过滤mötesplats活动
+  </button>
 </div>
 
 <div class="progress-container" id="kompisProgressContainer">
@@ -793,6 +796,7 @@ const KOMPIS_DATA = [
 
 let kompisEvents = [];
 let showOpenOnly = false;
+let hideMotesplats = false;
 let isFetchingKompis = false;
 const kompisMonthMap = {'jan':'1','feb':'2','mar':'3','apr':'4','maj':'5','jun':'6','jul':'7','aug':'8','sep':'9','okt':'10','nov':'11','dec':'12'};
 
@@ -855,8 +859,13 @@ async function fetchKompisEvents() {
       eventsToCheck.push(ev);
     }
     
+    pf.style.width = '50%';
+    pt.textContent = `已获取列表，共 ${kompisEvents.length} 个活动，正在检查报名状态...`;
+    await sleep(50);
+    
     // Check each event's detail page for booking status via Worker
-    for (const ev of eventsToCheck) {
+    for (let i = 0; i < eventsToCheck.length; i++) {
+      const ev = eventsToCheck[i];
       try {
         const detailResp = await fetch(`${workerUrl.replace('/api/kompis','/api/kompis-detail')}?slug=${ev.slug}`);
         if (detailResp.ok) {
@@ -866,6 +875,10 @@ async function fetchKompisEvents() {
           }
         }
       } catch(ex) {}
+      const pct = 50 + Math.round(((i+1)/eventsToCheck.length) * 50);
+      pf.style.width = pct + '%';
+      pt.textContent = `检查报名状态 ${i+1}/${eventsToCheck.length}`;
+      pd.textContent = ev.title.slice(0, 50);
     }
     
     if (kompisEvents.length === 0) throw new Error('No events');
@@ -897,6 +910,7 @@ async function fetchKompisEvents() {
 function renderKompisEvents() {
   const container = document.getElementById('kompisEventsContainer');
   let filtered = showOpenOnly ? kompisEvents.filter(e => !e.full) : kompisEvents;
+  if (hideMotesplats) filtered = filtered.filter(e => !e.title.toLowerCase().includes('mötesplats') && !e.place.toLowerCase().includes('mötesplats'));
   const shown = renderPages['kompisEventsContainer'] || 0;
   const batch = filtered.slice(0, shown + PAGE_SIZE);
   renderPages['kompisEventsContainer'] = batch.length;
@@ -960,12 +974,27 @@ const linkUrl = `https://kompissverige.se/activities/${e.slug}/`;
 function loadMoreKompis() { renderKompisEvents(); }
 
 function updateKompisStats() {
-  const filtered = showOpenOnly ? kompisEvents.filter(e => !e.full) : kompisEvents;
-  const openCount = kompisEvents.filter(e => !e.full).length;
+  let filtered = showOpenOnly ? kompisEvents.filter(e => !e.full) : kompisEvents;
+  if (hideMotesplats) filtered = filtered.filter(e => !e.title.toLowerCase().includes('mötesplats') && !e.place.toLowerCase().includes('mötesplats'));
+  const openCount = filtered.filter(e => !e.full).length;
   const fullCount = kompisEvents.filter(e => e.full).length;
   document.getElementById('kompisStatTotal').textContent = filtered.length;
   document.getElementById('kompisStatOpen').textContent = openCount;
   document.getElementById('kompisStatFull').textContent = fullCount;
+}
+
+function toggleMotesplatsFilter() {
+  hideMotesplats = !hideMotesplats;
+  const btn = document.getElementById('filterMotesplatsBtn');
+  if (hideMotesplats) {
+    btn.classList.add('active');
+    btn.textContent = '🏢 包含mötesplats活动';
+  } else {
+    btn.classList.remove('active');
+    btn.textContent = '🏢 过滤mötesplats活动';
+  }
+  updateKompisStats();
+  renderKompisEvents();
 }
 
 function toggleKompisFilter() {
