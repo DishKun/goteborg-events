@@ -887,7 +887,7 @@ async function fetchKompisEvents() {
         summary: cnInfo.summary || desc.slice(0,80),
         cn: cnInfo.cn || '', slug, link};
       kompisEvents.push(ev);
-      eventsToCheck.push(ev);
+      if (!title.toLowerCase().startsWith('m\u00f6tesplats')) eventsToCheck.push(ev);
     }
     
     pf.style.width = '50%';
