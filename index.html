@@ -942,7 +942,7 @@ async function fetchKompisEvents() {
         summary: cnInfo.summary || desc.slice(0,80),
         cn: cnInfo.cn || '', slug, link};
       kompisEvents.push(ev);
-      if (!title.toLowerCase().startsWith('m\u00f6tesplats')) eventsToCheck.push(ev);
+      if (!title.toLowerCase().includes('m\u00f6tesplats')) eventsToCheck.push(ev);
     }
     
     pf.style.width = '50%';
@@ -2049,16 +2049,18 @@ function parseAbfCourseCards(html) {
     const price = isFree ? '' : priceRaw;
     
     // Status badge
-    const statusM = card.match(/label-md border-teal[^>]*>\s*([^<]+)\s*</);
-    const status = statusM ? statusM[1].trim() : '';
+    const statusM = card.match(/label-md[^>]*>\s*([^<]+)\s*</);
+    let status = statusM ? statusM[1].trim() : '';
+    const isFull = status.toLowerCase().includes('fullbokad');
+    if (isFull) status = '已满员';
+    else if (status) status = '少量名额';
     
     // Summary: combine status + times info
     let summary = '';
-    if (status) summary = status;
-    if (times) summary = summary ? summary + ' · ' + times : times;
+    if (times) summary = times;
     
     results.push({title, slug, start, time, place, free: isFree, price, times, summary,
-      source: 'abf', link: 'https://www.abf.se' + href});
+      source: 'abf', link: 'https://www.abf.se' + href, status, isFull});
   }
   return results;
 }
@@ -2123,9 +2125,10 @@ function renderAbf(containerId, data) {
       renderedEvents.push({...e});
       const cd = e.cn ? ' <span class="cn">/ ' + e.cn + '</span>' : '';
       const lu = e.link || ('https://www.abf.se/vast/kurs/' + e.slug + '/');
-      html += '<div class="event-card"><div class="event-title"><a href="' + lu + '" target="_blank" rel="noopener">' + e.title + cd + '</a></div><div class="event-meta">';
+      html += '<div class="event-card' + (e.isFull ? ' paid' : '') + '"><div class="event-title"><a href="' + lu + '" target="_blank" rel="noopener">' + e.title + cd + '</a></div><div class="event-meta">';
       html += '<span>⏰ ' + (e.time || '—') + '</span><span>📍 ' + (e.place || '—') + '</span>';
       if (e.times) html += '<span>📆 ' + e.times + '</span>';
+      if (e.status) html += '<span class="badge ' + (e.isFull ? 'badge-paid' : 'badge-free') + '">' + e.status + '</span>';
       if (e.price) html += '<span class="badge badge-paid">💰 ' + e.price + '</span>';
       else if (e.free) html += '<span class="badge badge-free">🆓 免费</span>';
       if (e.summary) html += '<span style="color:#64748b;font-size:0.8rem">' + e.summary + '</span>';
