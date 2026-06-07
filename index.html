@@ -1822,6 +1822,21 @@ async function fetchGbgEvents() {
         const timeVals = timeM ? timeM.map(m => m.match(/>([^<]+)</)[1].trim()) : [];
         const time = timeVals.length > 1 ? timeVals[1] : (timeVals[0] || '');
         
+        // 按选中日期过滤
+        const labelsM = block.match(/c-label-value-list__label">([^<]+)<\/dt>/g);
+        const labels = labelsM ? labelsM.map(m => m.match(/>([^<]+)</)[1].trim()) : [];
+        let keep = true;
+        const gbgYear = gbgDate.slice(0,4);
+        if (labels.length >= 2 && labels[0] === 'Datum') {
+          const d = parseSwedishDateText(timeVals[0], gbgYear);
+          keep = (d === gbgDate);
+        } else if (labels.length >= 2 && labels[0] === 'B\u00f6rjar') {
+          const s = parseSwedishDateText(timeVals[0], gbgYear);
+          const e = parseSwedishDateText(timeVals[1], gbgYear);
+          keep = (s && e && s <= gbgDate && gbgDate <= e);
+        }
+        if (!keep) continue;
+        
         const cnInfo = getCnForEvent(title, org, m3CnLookup, aid);
         gbgEvents.push({title, date: gbgDate, time, place: org, aid, cn:cnInfo.cn, summary:cnInfo.summary});
         newCount++;
@@ -1861,7 +1876,6 @@ async function fetchGbgEvents() {
   btn.innerHTML = '🔄 重新获取';
   isFetchingGbg = false;
   
-  document.getElementById('gbgEventsContainer').innerHTML = '<div class="empty-state"><div class="icon">🔄</div><p>正在加载，请稍……</p></div>';
   await enrichEvents(gbgEvents, m3CnLookup, e => e.aid).catch(() => {});
   updateGbgStats();
   delete renderPages['gbgEventsContainer'];
