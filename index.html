@@ -2125,10 +2125,11 @@ function renderAbf(containerId, data) {
       renderedEvents.push({...e});
       const cd = e.cn ? ' <span class="cn">/ ' + e.cn + '</span>' : '';
       const lu = e.link || ('https://www.abf.se/vast/kurs/' + e.slug + '/');
-      html += '<div class="event-card' + (e.isFull ? ' paid' : '') + '"><div class="event-title"><a href="' + lu + '" target="_blank" rel="noopener">' + e.title + cd + '</a></div><div class="event-meta">';
+      html += '<div class="event-card' + (e.isFull ? ' paid' : '') + '"><div class="event-title"><a href="' + lu + '" target="_blank" rel="noopener">' + e.title + cd + '</a>';
+      if (e.status) html += ' <span class="badge ' + (e.isFull ? 'badge-paid' : 'badge-free') + '" style="font-size:0.7rem">' + e.status + '</span>';
+      html += '</div><div class="event-meta">';
       html += '<span>⏰ ' + (e.time || '—') + '</span><span>📍 ' + (e.place || '—') + '</span>';
       if (e.times) html += '<span>📆 ' + e.times + '</span>';
-      if (e.status) html += '<span class="badge ' + (e.isFull ? 'badge-paid' : 'badge-free') + '">' + e.status + '</span>';
       if (e.price) html += '<span class="badge badge-paid">💰 ' + e.price + '</span>';
       else if (e.free) html += '<span class="badge badge-free">🆓 免费</span>';
       if (e.summary) html += '<span style="color:#64748b;font-size:0.8rem">' + e.summary + '</span>';
