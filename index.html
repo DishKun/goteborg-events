@@ -3,7 +3,12 @@
   模块1: 直接调用 api.goteborg.com (支持CORS)  
   模块2: 通过 Worker 代理 kompissverige.se
   模块3: 通过 Worker 代理 goteborg.se SSR (支持CORS)
+  模块4: 通过 Worker 代理 abf.se 实时抓取课程与活动
   所有模块都有内嵌数据兜底，Worker 不可用时自动使用缓存
+  
+  Worker 需添加 /api/abf 路由:
+    GET /api/abf?type=course&page=N  -> fetch abf.se/vast/kurs-sok/?type=course&sort=date&display=list&page=N
+    GET /api/abf?type=event&page=N   -> fetch abf.se/vast/kurs-sok/?type=event&sort=date&display=list&page=N
 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -14,6 +19,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="哥德堡活动">
 <link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
 <link rel="manifest" href="manifest.json">
 <title>哥德堡活动</title>
 <style>
@@ -290,16 +297,55 @@
   }
   .sticky-collapse:hover { background: #2d6aa0; }
 
+
+  .interest-btn {
+    cursor:pointer;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    width:1.4rem;
+    height:1.4rem;
+    margin-left:0.15rem;
+    color:#e53e3e;
+    font-family:"Segoe UI Symbol","Arial Unicode MS",sans-serif;
+    font-size:1.25rem;
+    line-height:1;
+    user-select:none;
+    transition:transform 0.15s;
+  }
+  .interest-btn:hover { transform:scale(1.15); }
+  .interest-btn.active { color:#e53e3e; }
+  .sidebar { position:fixed; top:0; right:-340px; width:320px; height:100%; background:white; z-index:1000; box-shadow:-4px 0 12px rgba(0,0,0,0.15); transition:right 0.3s; overflow-y:auto; padding:1rem; }
+  .sidebar.open { right:0; }
+  .sidebar-toggle { position:fixed; top:12px; right:12px; z-index:1001; padding:0.5rem 0.8rem; background:#e53e3e; color:white; border:none; border-radius:8px; cursor:pointer; font-size:0.9rem; font-weight:bold; }
+  .sidebar-toggle:hover { background:#2d6aa0; }
+  .sidebar-actions { display:flex; gap:0.4rem; margin:0.6rem 0 0.4rem; }
+  .sidebar-action {
+    flex:1;
+    border:1px solid #cbd5e1;
+    background:#f8fafc;
+    color:#1e3a5f;
+    border-radius:6px;
+    padding:0.42rem 0.35rem;
+    font-size:0.78rem;
+    font-weight:600;
+    cursor:pointer;
+  }
+  .sidebar-action:hover { background:#e8f0fe; border-color:#93c5fd; }
+  .sidebar .item { padding:0.5rem 0; border-bottom:1px solid #e2e8f0; font-size:0.85rem; }
+  .sidebar .item a { color:#1e3a5f; text-decoration:none; }
+  .sidebar .item .rm { color:#94a3b8; cursor:pointer; float:right; }
+
 </style>
 </head>
 <body>
 
 <button class="sticky-collapse" id="floatCollapse" onclick="toggleCurrentModule()" style="display:none">📋</button>
 
-<button class="sticky-collapse" id="btnM1" onclick="toggleOneModule('eventsContainer','btnM1','Gothenburg 活动')" style="bottom:20px">📋 收起Gothenburg 活动</button>
-<button class="sticky-collapse" id="btnM2" onclick="toggleOneModule('kompisEventsContainer','btnM2','Kompis 活动')" style="bottom:64px">📋 收起Kompis 活动</button>
-<button class="sticky-collapse" id="btnM3" onclick="toggleOneModule('gbgEventsContainer','btnM3','市政厅活动')" style="bottom:108px">📋 收起市政厅活动</button>
-<button class="sticky-collapse" id="btnM4" onclick="toggleOneModule('abfEventsContainer','btnM4','ABF 活动')" style="bottom:152px">📋 收起ABF 活动</button>
+<button class="sticky-collapse" id="btnM1" onclick="scrollToModule('eventsContainer')" style="bottom:20px;left:20px;right:auto">📋 跳转到Gothenburg 活动</button>
+<button class="sticky-collapse" id="btnM2" onclick="scrollToModule('kompisEventsContainer')" style="bottom:64px;left:20px;right:auto">📋 跳转到Kompis 活动</button>
+<button class="sticky-collapse" id="btnM3" onclick="scrollToModule('gbgEventsContainer')" style="bottom:108px;left:20px;right:auto">📋 跳转到市政厅活动</button>
+<button class="sticky-collapse" id="btnM4" onclick="scrollToModule('abfEventsContainer')" style="bottom:152px;left:20px;right:auto">📋 跳转到ABF 活动</button>
 
 <div class="header">
   <h1>🎭 哥德堡活动</h1>
@@ -642,6 +688,7 @@ async function fetchEvents() {
   btn.innerHTML = '🔄 重新获取';
   isFetching = false;
   
+  document.getElementById('eventsContainer').innerHTML = '<div class="empty-state"><div class="icon">\u{1f504}</div><p>正在加载，请稍……</p></div>';
   await enrichEvents(allEvents, m1CnLookup, e => e.slug).catch(() => {});
   markModuleLoaded('eventsContainer');
   updateStats();
@@ -722,8 +769,8 @@ function renderEventBatch(container, events, hasMore) {
   }
   
   container.innerHTML = html;
+  addInterestButtons(container, events);
 }
-
 function loadMoreEvents() { renderEvents(); }
 
 function updateStats() {
@@ -762,6 +809,14 @@ function toggleOneModule(containerId, btnId, name) {
   moduleCollapsed[containerId] = !moduleCollapsed[containerId];
   el.style.display = moduleCollapsed[containerId] ? 'none' : '';
   btn.textContent = moduleCollapsed[containerId] ? '📋 展开' + name : '📋 收起' + name;
+}
+
+function scrollToModule(id) {
+  const el = document.getElementById(id);
+  if (el) {
+    const header = el.getBoundingClientRect().top + window.scrollY - 80;
+    window.scrollTo({ top: header, behavior: 'smooth' });
+  }
 }
 
 function markModuleLoaded(containerId) {
@@ -931,6 +986,7 @@ async function fetchKompisEvents() {
   btn.innerHTML = '🔄 重新获取';
   isFetchingKompis = false;
   
+  document.getElementById('kompisEventsContainer').innerHTML = '<div class="empty-state"><div class="icon">\u{1f504}</div><p>正在加载，请稍……</p></div>';
   await enrichEvents(kompisEvents, m2CnLookup, e => e.slug).catch(() => {});
   updateKompisStats();
   delete renderPages['kompisEventsContainer'];
@@ -990,6 +1046,7 @@ const linkUrl = `https://kompissverige.se/activities/${e.slug}/`;
           <span>⏰ ${e.time}</span>
           <span>📍 ${e.place}</span>
           ${statusBadge}
+        
         </div>
         ${e.summary ? `<div class=\"event-summary\">📝 ${e.summary}</div>` : ''}
       </div>`;
@@ -999,6 +1056,7 @@ const linkUrl = `https://kompissverige.se/activities/${e.slug}/`;
   
   if (filtered.length > batch.length) html += '<button class="load-more-btn" onclick="loadMoreKompis()">📥 继续浏览更多活动 (' + batch.length + ' 已显示)...</button>';
   container.innerHTML = html;
+  addInterestButtons(container, batch);
   updateKompisStats();
 }
 
@@ -1803,6 +1861,7 @@ async function fetchGbgEvents() {
   btn.innerHTML = '🔄 重新获取';
   isFetchingGbg = false;
   
+  document.getElementById('gbgEventsContainer').innerHTML = '<div class="empty-state"><div class="icon">🔄</div><p>正在加载，请稍……</p></div>';
   await enrichEvents(gbgEvents, m3CnLookup, e => e.aid).catch(() => {});
   updateGbgStats();
   delete renderPages['gbgEventsContainer'];
@@ -1858,6 +1917,7 @@ function renderGbgEvents() {
           <span>⏰ ${e.time || '全天'}</span>
           <span>📍 ${e.place}</span>
         </div>
+        
         ${e.summary ? `<div class="event-summary">📝 ${e.summary}</div>` : ''}
       </div>`;
     }
@@ -1866,6 +1926,7 @@ function renderGbgEvents() {
   
   if (gbgEvents.length > batch.length) html += '<button class="load-more-btn" onclick="loadMoreGbg()">📥 继续浏览更多活动 (' + batch.length + ' 已显示)...</button>';
   container.innerHTML = html;
+  addInterestButtons(container, batch);
   updateGbgStats();
 }
 
@@ -1874,127 +1935,540 @@ function loadMoreGbg() { renderGbgEvents(); }
 function updateGbgStats() {
   document.getElementById('gbgStatTotal').textContent = gbgEvents.length;
 }
+
 </script>
 
 <script>
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js');
+  navigator.serviceWorker.register('./sw.js');
 }
-// ========== MODULE 4: ABF VÄST ==========
-const ABF_KURSER = [
-  {title:"Lär dig grunderna i datoranvändning och Office-paketet!",cn:"了解计算和 Office 套件的基础知识！",times:"5 gånger",start:"2026-06-04",time:"13:00 - 16:00",place:"ABC Skolspåret 33, Skolspåret 33 Angered",free:true,price:"",slug:"data-abc-datakunskap-ons-tors-13-16-3927658"},
-  {title:"Lär dig svenska i din egen takt - Språk ABC",cn:"按照自己的节奏学习瑞典语 - Language ABC",times:"5 gånger",start:"2026-06-04",time:"09:00 - 12:00",place:"ABC Skolspåret 33, Skolspåret 33 Angered",free:true,price:"",slug:"sprak-abc-svenska-onsdag-torsdag-0900-1200-3927659"},
-  {title:"Sommarkurs - Drejning 8-12 juni",cn:"暑期课程 - 6 月 8 日至 12 日",times:"5 gånger",start:"2026-06-08",time:"09:30 - 15:30",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-sommarkurs-2026-v24-drejning-8-12-juni-3891299"},
-  {title:"Sommarkurs - Måla i Majorna",cn:"暑期课程 - 马略纳绘画",times:"5 gånger",start:"2026-06-08",time:"10:00 - 16:15",place:"Kustens Hus, Taubegatan 9 Göteborg",free:false,price:"3700:-",slug:"konst-sommarkurs-2026-v24-mala-i-majorna-3891914"},
-  {title:"Sommarkurs - Keramik Fri form 22-26 juni",cn:"暑期课程 - 陶瓷自由形式 6 月 22 日至 26 日",times:"5 gånger",start:"2026-06-22",time:"09:30 - 15:30",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-sommarkurs-2026-v26-fri-form-22-26-juni-3913229"},
-  {title:"Sommarkurs - Drejning 29 juni-3 juli",cn:"夏季课程 - 钻探 6 月 29 日至 7 月 3 日",times:"5 gånger",start:"2026-06-29",time:"09:30 - 15:30",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-sommarkurs-2026-v27-drejning-29-juni-3-juli-3913674"},
-  {title:"Sommarkurs - Keramik på Ögat 13-15 juli",cn:"夏季课程 - Ögat 陶艺课程，7 月 13 日至 15 日",times:"5 gånger",start:"2026-07-13",time:"17:00 - 20:00",place:"ÖGAT - Östra Göteborgs Alternativa Träffpunkt, Götaholmsgatan 22 Göteborg",free:false,price:"1860:-",slug:"sommarkurs-keramik-pa-ogat-13-15-juli-2026-3894836"},
-  {title:"Sommarkurs - Makramé",cn:"夏季课程 - Macramé",times:"2 gånger",start:"2026-06-27",time:"10:00 - 16:00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1400:-",slug:"hantverk-makrame-sommarkurs-3911283"},
-  {title:"Skapa ringblommor - Cempasúchil blommor",cn:"创建万寿菊 - Cempasúchil 花",times:"5 gånger",start:"2026-06-13",time:"11:00 - 13:30",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:true,price:"",slug:"skapa-ringblommor-cempasushil-blommor-3931432"},
-  {title:"Levande Cartonería - Calaveras och Catrinas",cn:"Live Cartonería - 卡拉维拉斯和卡特里纳斯",times:"5 gånger",start:"2026-06-13",time:"11:00 - 13:15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:true,price:"",slug:"levande-cartoneria-calaveras-och-catrinas-3931509"},
-  {title:"Decoupage - dekorera med servetter",cn:"剪纸 - 用餐巾装饰",times:"4 gånger",start:"2026-06-20",time:"13:30 - 16:00",place:"ABF Väst, Göteborg",free:true,price:"",slug:"decoupage-3876339"},
-  {title:"Minne i rörelse - skapa fjärilar",cn:"运动中的记忆——创造蝴蝶",times:"5 gånger",start:"2026-06-13",time:"11:00 - 13:30",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:true,price:"",slug:"minne-i-rorelse-skapa-fjarilar-3931505"},
-  {title:"Svenska i vardagen - samtal och samhällsliv",cn:"日常生活中的瑞典语——对话和社交生活",times:"8 gånger",start:"2026-07-06",time:"09:15 - 12:30",place:"ABF Väst, Göteborg",free:true,price:"",slug:"svenska-i-vardagen-samtal-och-samhallsliv-3930802"},
-  {title:"Svenska för nybörjare - språk och gemenskap",cn:"瑞典语初学者 - 语言和社区",times:"8 gånger",start:"2026-07-06",time:"09:15 - 12:30",place:"ABF Väst, Göteborg",free:true,price:"",slug:"svenska-for-nyborjare-sprak-och-gemenskap-3930787"},
-  {title:"Lär dig bli förstådd - svensk prosodi",cn:"学会被理解——瑞典韵律",times:"8 gånger",start:"2026-07-07",time:"09:15 - 12:30",place:"ABF Väst, Göteborg",free:true,price:"",slug:"lar-dig-bli-forstadd-svensk-prosodi-3930808"},
-  {title:"Akryl Målning från Grunden - Grupp 1 (tisdagar)",cn:"丙烯画从基础开始 - 第 1 组（周二）",times:"8 gånger",start:"2026-07-06",time:"09:15 - 12:30",place:"ABF Väst, Göteborg",free:true,price:"",slug:"akrylmalning-fran-grunden-grupp-1-3932684"},
-  {title:"Akryl Målning från Grunden - Grupp 2 (onsdagar)",cn:"丙烯画从基础开始 - 第 2 组（周三）",times:"8 gånger",start:"2026-07-07",time:"09:15 - 12:30",place:"ABF Väst, Göteborg",free:true,price:"",slug:"akrylmalning-fran-grunden-grupp-2-3930926"},
-  {title:"Målning SRF onsdagar",cn:"绘画 SRF 星期三",times:"12 gånger",start:"2026-09-16",time:"10:30 - 13:30",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:true,price:"",slug:"malning-srf-onsdag-1030-3924726"},
-  {title:"Gitarr Grupp 1 - Orust",cn:"吉他组 1 - 奥鲁斯特",times:"10 gånger",start:"2026-09-22",time:"17:00 - 18:30",place:"ABF Orust, Skansvägen 4 B Svanesund",free:false,price:"1350:-",slug:"gitarr-grupp-1-orust-3911743"},
-  {title:"Gitarr Grupp 2 - Orust",cn:"吉他第二组 - 奥鲁斯特",times:"10 gånger",start:"2026-09-22",time:"18:45 - 20:15",place:"ABF Orust, Skansvägen 4 B Svanesund",free:false,price:"1350:-",slug:"gitarr-grupp-2-orust-3911803"},
-  {title:"Hantverk - förnya dina textilier",cn:"工艺品 - 更新您的纺织品",times:"8 gånger",start:"2026-09-11",time:"10:00 - 13:00",place:"Öckerö Bibliotek",free:true,price:"",slug:"fornya-dina-textilier-med-enkla-medel-3928921"},
-  {title:"Skrivarcirkel - kom igång att skriva",cn:"写作圈——开始写作",times:"8 gånger",start:"2026-10-15",time:"18:00 - 20:00",place:"Humlan, Tjörn, Wackenfeldts väg 4 Kållekärr",free:true,price:"",slug:"skrivarcirkel-kom-igang-att-skriva-alla-har-nagot-att-beratta-3927017"},
-  {title:"Hållbarhetsverkstan - spara på maten",cn:"可持续发展研讨会 - 节省食物",times:"4 gånger",start:"2026-09-01",time:"14:00 - 16:15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-spara-pa-maten-3932099"},
-  {title:"Hållbarhetsverkstan - stickning",cn:"可持续发展研讨会 - 针织",times:"4 gånger",start:"2026-09-02",time:"18:00 - 20:15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-stickning-3933341"},
-  {title:"Hållbarhetsverkstan - stickning (2)",cn:"可持续发展工作坊 - 针织 (2)",times:"4 gånger",start:"2026-09-02",time:"14:00 - 16:15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-stickning-3933339"},
-  {title:"Hållbarhetsverkstan - skapa med trasor och stuvar",cn:"可持续发展研讨会 - 用碎布和其他东西进行创作",times:"4 gånger",start:"2026-09-28",time:"14:00 - 16:15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-skapa-med-trasor-och-stuvar-3933785"},
-  {title:"Hållbarhetsverkstan - skapa med trasor och stuvar (2)",cn:"可持续发展工作坊 - 用碎布和储物件进行创作 (2)",times:"4 gånger",start:"2026-09-28",time:"18:00 - 20:15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-skapa-med-trasor-och-stuvar-3933787"},
-  {title:"Hållbarhetsverkstan - Ung Impact",cn:"可持续发展研讨会 - Young Impact",times:"4 gånger",start:"2026-09-15",time:"17:30 - 19:45",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-ung-impact-3932100"},
-  {title:"Hållbarhetsverkstan - växtfärgning",cn:"可持续发展工作坊-植物染色",times:"4 gånger",start:"2026-09-30",time:"18:00 - 20:15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-vaxtfargning-3932102"},
-  {title:"Hållbarhetsverkstan - växtfärgning (2)",cn:"可持续发展工作坊-植物着色（2）",times:"4 gånger",start:"2026-09-30",time:"14:00 - 16:15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-vaxtfargning-3932101"},
-  {title:"Hållbarhetsverkstan - fixa julen med återbruk",cn:"可持续发展研讨会 - 通过回收修复圣诞节",times:"4 gånger",start:"2026-11-25",time:"14:00 - 16:15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-fixa-julen-med-aterbruk-3932110"},
-  {title:"Hållbarhetsverkstan - fixa julen med återbruk (2)",cn:"可持续发展研讨会 - 用回收修复圣诞节 (2)",times:"4 gånger",start:"2026-11-25",time:"18:00 - 20:15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-fixa-julen-med-aterbruk-3932109"},
-  {title:"Hållbarhetsverkstan - remake av kläder",cn:"可持续发展工作坊——衣服的再造",times:"4 gånger",start:"2026-10-28",time:"18:00 - 20:15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-remake-av-klader-3932106"},
-  {title:"Hållbarhetsverkstan - remake av kläder (2)",cn:"可持续发展工作坊-服装再造(2)",times:"4 gånger",start:"2026-10-28",time:"14:00 - 16:15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-remake-av-klader-3932107"},
-];;
+</script>
 
-const ABF_EVENTS = [
-  {title:'West Pride – Förbjuden kärlek i Sverige under 1900-talet',cn:'West Pride – 20世纪瑞典的禁止爱',date:'2026-06-12',time:'13:00 - 14:00',place:'Verket , Lilla Stampgatan 1A Göteborg',slug:'forelasning-forbjuden-karlek-i-sverige-under-1900-talet-med-mian-lodalen-del-av-west-pride-3922145'},
-  {title:'Föreläsning om demokrati, val och politik i Sverige på lätt svenska',cn:'关于民主、选举和瑞典政治的简单瑞典语讲座',date:'2026-06-09',time:'10:00 - 11:00',place:'Integrationsnätverk Göteborg, Vårvindsgatan 20',slug:'forelasning-med-john-harfouche-demokrati-val-och-politik-i-sverige-pa-latt-svenska-3929460'},
-  {title:'Föreläsning om demokrati, val och politik i Sverige på lätt svenska',cn:'关于民主、选举和瑞典政治的简单瑞典语讲座',date:'2026-06-03',time:'10:00 - 11:00',place:'Integrationsnätverk Göteborg, Vårvindsgatan 20',slug:'forelasning-med-klara-holmin-demokrati-val-och-politik-i-sverige-pa-latt-svenska-3929456'},
-  {title:'Föreläsning om demokrati, val och politik i Sverige på lätt svenska',cn:'关于民主、选举和瑞典政治的简单瑞典语讲座',date:'2026-06-11',time:'10:00 - 11:00',place:'Integrationsnätverk Göteborg, Vårvindsgatan 20',slug:'forelasning-med-martin-wannholt-demokrati-val-och-politik-i-sverige-pa-latt-svenska-3929465'},
-  {title:'Konsert med Totodaroto och Out of Control',cn:'Totodaroto和Out of Control的音乐会',date:'2026-07-03',time:'19:00 - 23:00',place:'Ellösparken Orust, Glimsåsvägen 11 Ellös',slug:'konsert-med-totodaroto-och-out-of-control-3922651'},
-  {title:'Konstutställning på Ellösparken',cn:'埃洛斯公园的艺术展',date:'2026-07-19',time:'15:00 - 18:00',place:'Ellösparken Orust, Glimsåsvägen 11 Ellös',slug:'konstutstallning-pa-ellosparken-3922664'},
-  {title:'Konstutställning på Ellösparken',cn:'埃洛斯公园的艺术展',date:'2026-07-26',time:'14:00 - 18:00',place:'Ellösparken Orust, Glimsåsvägen 11 Ellös',slug:'konstutstallning-med-carl-erasmie-agneta-olsdon-och-cecilia-zettersten-3922665'},
-  {title:'Konstutställning och kontsvandringar på Ellösparken',cn:'埃洛斯公园的艺术展览和漫步',date:'2026-07-16',time:'10:00 - 14:00',place:'Ellösparken Orust, Glimsåsvägen 11 Ellös',slug:'konstutstallning-med-caroline-ballantyne-norneby-cornelia-cederleuf-camilla-hyllen-marie-hoglind-3922668'},
-  {title:'Konsert med Dominique',cn:'与多米尼克的音乐会',date:'2026-06-13',time:'19:00 - 21:00',place:'Stenhuset, Djurgårdsgatan 29 Göteborg',slug:'kulturkrock-konsert-med-dominique-3931467'},
+<script>
+// ========== MODULE 4: ABF VÄST ==========
+// 实时抓取自 https://www.abf.se/vast/kurs-sok/
+// 通过 Cloudflare Worker 代理 (plain-meadow-437c.dishkun2012.workers.dev/api/abf)
+// Worker 需添加路由: GET /api/abf?type=course&page=N 或 ?type=event&page=N
+// Worker 代码见部署说明顶部
+
+const ABF_KURSER_FALLBACK = [
+  {title:"Sommarkurs - Drejning 8-12 juni",start:"2026-06-08",time:"09.30-15.30",times:"5 gånger",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-sommarkurs-2026-v24-drejning-8-12-juni-3891299"},
+  {title:"Sommarkurs - Måla i Majorna! 8-12 juni",start:"2026-06-08",time:"10.00-16.15",times:"5 gånger",place:"Kustens Hus, Taubegatan 9 Göteborg",free:false,price:"3700:-",slug:"konst-sommarkurs-2026-v24-mala-i-majorna-3891914"},
+  {title:"Att vara sig själv på jobbet",start:"2026-06-09",time:"18.00-20.00",times:"1 gånger",place:"ABF Olof Palmes Plats 1, Olof Palmes Plats 1 Göteborg",free:true,price:"",slug:"workshop-att-vara-sig-sjalv-pa-jobbet-ayotzinapa-forening-3935013"},
+  {title:"Skapa ringblommor till Día de Muertos",start:"2026-06-13",time:"11.00-13.30",times:"5 gånger",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:true,price:"",slug:"skapa-ringblommor-cempasushil-blommor-3931432"},
+  {title:"Minne i rörelse - skapa fjärilar och dekorativa föremål",start:"2026-06-13",time:"11.00-13.30",times:"5 gånger",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:true,price:"",slug:"minne-i-rorelse-skapa-fjarilar-3931505"},
+  {title:"Levande Cartoneria - Calaveras och catrinas",start:"2026-06-13",time:"11.00-13.15",times:"5 gånger",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:true,price:"",slug:"levande-cartoneria-calaveras-och-catrinas-3931509"},
+  {title:"Sommarkurs - Fri form i keramik 22-26 juni",start:"2026-06-22",time:"09.30-15.30",times:"5 gånger",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-sommarkurs-2026-v26-fri-form-22-26-juni-3913229"},
+  {title:"Sommarkurs - Drejning 29 juni-3 juli",start:"2026-06-29",time:"09.30-15.30",times:"5 gånger",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-sommarkurs-2026-v27-drejning-29-juni-3-juli-3913674"},
+  {title:"Sommarkurs Svenska för nybörjare",start:"2026-07-06",time:"09.15-12.30",times:"8 gånger",place:"ABF Partille, Gamla Kronvägen 56 Partille",free:true,price:"",slug:"svenska-for-nyborjare-sprak-och-gemenskap-3930787"},
+  {title:"Sommarkurs Akrylmålning från grunden",start:"2026-07-06",time:"09.15-12.30",times:"8 gånger",place:"ABF Partille, Gamla Kronvägen 56 Partille",free:true,price:"",slug:"akrylmalning-fran-grunden-grupp-1-3932684"},
+  {title:"Sommarkurs Svenska i vardagen - samtal och samhällsliv",start:"2026-07-06",time:"09.15-12.30",times:"8 gånger",place:"ABF Partille, Gamla Kronvägen 56 Partille",free:true,price:"",slug:"svenska-i-vardagen-samtal-och-samhallsliv-3930802"},
+  {title:"Sommarkurs Svensk prosodi",start:"2026-07-07",time:"09.15-12.30",times:"8 gånger",place:"ABF Partille, Gamla Kronvägen 56 Partille",free:true,price:"",slug:"lar-dig-bli-forstadd-svensk-prosodi-3930808"},
+  {title:"Sommarkurs Akrylmålning från grunden",start:"2026-07-07",time:"09.15-12.30",times:"8 gånger",place:"ABF Partille, Gamla Kronvägen 56 Partille",free:true,price:"",slug:"akrylmalning-fran-grunden-grupp-2-3930926"},
+  {title:"Förberedelsekurs inför medborgarskapsprovet i samhällskunskap",start:"2026-08-17",time:"17.00-19.15",times:"10 gånger",place:"Gamlestadens Medborgarhus, Brahegatan 11C Göteborg",free:true,price:"",slug:"forbredelsekurs-infor-medborgarskapsprovet-i-samhallskunskap-3934360"},
+  {title:"Nyfiken på AI och hur du kan använda det?",start:"2026-08-20",time:"09.30-11.15",times:"5 gånger",place:"ABF Mölndal, Frölundagatan 37 Mölndal",free:true,price:"",slug:"ai-artificiell-intelligens-3934522"},
+  {title:"Mobilens appar för seniorer",start:"2026-08-25",time:"09.30-11.15",times:"6 gånger",place:"ABF Mölndal, Frölundagatan 37 Mölndal",free:true,price:"",slug:"mobilens-appar-for-seniorer-3934542"},
+  {title:"Hållbarhetsverkstan - Spara på maten",start:"2026-09-01",time:"14.00-16.15",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-spara-pa-maten-3932099"},
+  {title:"Hållbarhetsverkstan - Stickning",start:"2026-09-02",time:"14.00-16.15",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-stickning-3933339"},
+  {title:"Hållbarhetsverkstan - Stickning",start:"2026-09-02",time:"18.00-20.15",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-stickning-3933341"},
+  {title:"Teaterspaning",start:"2026-09-03",time:"19.00-21.30",times:"15 gånger",place:"Egen",free:false,price:"3050:-",slug:"samhalle-teaterspaning-3918364"},
+  {title:"Förnya dina textilier med enkla medel",start:"2026-09-11",time:"10.00-13.00",times:"1 gånger",place:"Öckerö Bibliotek",free:true,price:"",slug:"fornya-dina-textilier-med-enkla-medel-3928921"},
+  {title:"Hållbarhetsverkstan - Ung impact",start:"2026-09-15",time:"17.30-19.45",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-ung-impact-3932100"},
+  {title:"Målning med Synskadades Riksförbund",start:"2026-09-16",time:"10.30-13.30",times:"12 gånger",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:true,price:"",slug:"malning-srf-onsdag-1030-3924726"},
+  {title:"Akustisk gitarr för nybörjare - Orust",start:"2026-09-22",time:"17.00-18.30",times:"10 gånger",place:"ABF Orust, Skansvägen 4B Svanesund",free:false,price:"1350:-",slug:"gitarr-grupp-1-orust-3911743"},
+  {title:"Akustisk gitarr för nybörjare - Orust",start:"2026-09-22",time:"18.45-20.15",times:"10 gånger",place:"ABF Orust, Skansvägen 4B Svanesund",free:false,price:"1350:-",slug:"gitarr-grupp-2-orust-3911803"},
+  {title:"Decoupage Unga Örnar",start:"2026-09-26",time:"13.30-16.00",times:"4 gånger",place:"ABF Partille, Gamla Kronvägen 56 Partille",free:true,price:"",slug:"decoupage-3876339"},
+  {title:"Hållbarhetsverkstan - Skapa med trasor och stuvar",start:"2026-09-28",time:"14.00-16.15",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-skapa-med-trasor-och-stuvar-3933785"},
+  {title:"Hållbarhetsverkstan - Skapa med trasor och stuvar",start:"2026-09-28",time:"18.00-20.15",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-skapa-med-trasor-och-stuvar-3933787"},
+  {title:"Hållbarhetsverkstan - Växtfärgning",start:"2026-09-30",time:"14.00-16.15",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-vaxtfargning-3932101"},
+  {title:"Hållbarhetsverkstan - Växtfärgning",start:"2026-09-30",time:"18.00-20.15",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-vaxtfargning-3932102"},
+  {title:"Skrivarcirkel - kom igång att skriva, alla har något att berätta",start:"2026-10-15",time:"18.00-20.00",times:"8 gånger",place:"Humlan Tjörn, Wackenfeldts väg 4 Kållekärr",free:true,price:"",slug:"skrivarcirkel-kom-igang-att-skriva-alla-har-nagot-att-beratta-3927017"},
+  {title:"Hållbarhetsverkstan - Remake av kläder",start:"2026-10-28",time:"18.00-20.15",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-remake-av-klader-3932106"},
+  {title:"Hållbarhetsverkstan - Remake av kläder",start:"2026-10-28",time:"14.00-16.15",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-remake-av-klader-3932107"},
+  {title:"Hållbarhetsverkstan - Fixa julen med återbruk",start:"2026-11-25",time:"18.00-20.15",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-fixa-julen-med-aterbruk-3932109"},
+  {title:"Hållbarhetsverkstan - Fixa julen med återbruk",start:"2026-11-25",time:"14.00-16.15",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-fixa-julen-med-aterbruk-3932110"}
+];
+
+const ABF_EVENTS_FALLBACK = [
+  {title:"Föreläsning om demokrati, val och politik i Sverige på lätt svenska",date:"2026-06-09",time:"10.00-11.00",place:"Göteborg",slug:"forelasning-med-john-harfouche-demokrati-val-och-politik-i-sverige-pa-latt-svenska-3929460"},
+  {title:"Föreläsning om demokrati, val och politik i Sverige på lätt svenska",date:"2026-06-11",time:"10.00-11.00",place:"Göteborg",slug:"forelasning-med-martin-wannholt-demokrati-val-och-politik-i-sverige-pa-latt-svenska-3929465"},
+  {title:"West Pride – Förbjuden kärlek i Sverige under 1900-talet",date:"2026-06-12",time:"13.00-14.00",place:"Göteborg",slug:"forelasning-forbjuden-karlek-i-sverige-under-1900-talet-med-mian-lodalen-del-av-west-pride-3922145"},
+  {title:"Konsert med Dominique",date:"2026-06-13",time:"19.00-20.00",place:"Göteborg",slug:"kulturkrock-konsert-med-dominique-3931467"},
+  {title:"Konsert med Totodaroto och Out of Control",date:"2026-07-03",time:"19.00-23.00",place:"Ellös",slug:"konsert-med-totodaroto-och-out-of-control-3922651"},
+  {title:"Konstutställning och kontsvandringar på Ellösparken",date:"2026-07-16",time:"10.00-17.00",place:"Ellös",slug:"konstutstallning-pa-ellosparken-3922664"},
+  {title:"Konstutställning på Ellösparken",date:"2026-07-19",time:"15.00-16.00",place:"Ellös",slug:"konstutstallning-med-carl-erasmie-agneta-olsdon-och-cecilia-zettersten-3922665"},
+  {title:"Konstutställning på Ellösparken",date:"2026-07-26",time:"14.00-15.00",place:"Ellös",slug:"konstutstallning-med-caroline-ballantyne-norneby-cornelia-cederleuf-camilla-hyllen-marie-hoglind-3922668"},
+  {title:"Konstutställning på Ellösparken",date:"2026-08-02",time:"14.00-15.00",place:"Ellös",slug:"konstutstallning-med-lars-aune-birgitta-lundh-gitse-och-susanne-nilsson-3922670"}
 ];
 
 let abfKurserEvents = [];
 let isFetchingAbf = false;
 
-function renderAbf(containerId, data, isKurser) {
+// Parse CourseCard HTML blocks into event objects
+function parseAbfCourseCards(html) {
+  const results = [];
+  const articleBlocks = html.split('<article class="CourseCard realtive group');
+  for (let i = 1; i < articleBlocks.length; i++) {
+    const block = articleBlocks[i];
+    const endIdx = block.indexOf('</article>');
+    const card = endIdx > 0 ? block.substring(0, endIdx) : block;
+    
+    // Title
+    const titleM = card.match(/CourseCard-title[^>]*>\s*([^<]+)\s*</);
+    const title = titleM ? titleM[1].trim() : '';
+    if (!title) continue;
+    
+    // Link from footer
+    const linkM = card.match(/href="(?:https?:\/\/www\.abf\.se)?(\/vast\/kurs\/[^"]+)"/);
+    const href = linkM ? linkM[1] : '';
+    const slug = href.split('/').filter(Boolean).pop() || '';
+    
+    // Location (handle <br/> inside <strong>)
+    const locM = card.match(/CourseCard-location[^>]*>[\s\S]*?<strong>([\s\S]*?)<\/strong>/);
+    const place = locM ? locM[1].replace(/<br\s*\/?>/g,', ').replace(/<[^>]*>/g,'').replace(/\s+/g,' ').trim() : '';
+    
+    // Gatherings (number of sessions)
+    const gatheringsM = card.match(/CourseCard-gatherings[^>]*>[\s\S]*?<strong>(\d+)<\/strong>/);
+    const times = gatheringsM ? gatheringsM[1] + ' gånger' : '';
+    
+    // Start date (first CourseCard-date with datetime)
+    const startDateM = card.match(/CourseCard-date[^>]*>[\s\S]*?datetime="(\d{4}-\d{2}-\d{2})"/);
+    const start = startDateM ? startDateM[1] : '';
+    
+    // Time values (from time elements with HH.MM)
+    const timeEls = [...card.matchAll(/<time datetime="(\d{2}\.\d{2})">([^<]+)<\/time>/g)];
+    let time = '';
+    if (timeEls.length >= 2) {
+      time = timeEls[0][2].trim() + '-' + timeEls[timeEls.length-1][2].trim();
+    } else if (timeEls.length === 1) {
+      time = timeEls[0][2].trim();
+    }
+    
+    // Price
+    const priceM = card.match(/CourseCard-price[^>]*>[\s\S]*?<strong>([\s\S]*?)<\/strong>/);
+    const priceRaw = priceM ? priceM[1].replace(/<[^>]*>/g,'').trim() : '';
+    const isFree = priceRaw === 'Gratis' || priceRaw === '' || priceRaw === '0:-';
+    const price = isFree ? '' : priceRaw;
+    
+    // Status badge
+    const statusM = card.match(/label-md border-teal[^>]*>\s*([^<]+)\s*</);
+    const status = statusM ? statusM[1].trim() : '';
+    
+    // Summary: combine status + times info
+    let summary = '';
+    if (status) summary = status;
+    if (times) summary = summary ? summary + ' · ' + times : times;
+    
+    results.push({title, slug, start, time, place, free: isFree, price, times, summary,
+      source: 'abf', link: 'https://www.abf.se' + href});
+  }
+  return results;
+}
+
+// Parse EventCard HTML blocks into event objects
+function parseAbfEventCards(html) {
+  const results = [];
+  const articleBlocks = html.split('<article class="EventCard group');
+  for (let i = 1; i < articleBlocks.length; i++) {
+    const block = articleBlocks[i];
+    const endIdx = block.indexOf('</article>');
+    const card = endIdx > 0 ? block.substring(0, endIdx) : block;
+    
+    // Title
+    const titleM = card.match(/EventCard-title[^>]*>[\s\S]*?<a[^>]*href="(?:https?:\/\/www\.abf\.se)?(\/vast\/kurs\/[^"]+)"[^>]*>([^<]+)<\/a>/);
+    const title = titleM ? titleM[2].trim() : '';
+    if (!title) {
+      // Try alternative title pattern
+      const altTitleM = card.match(/EventCard-title[^>]*>\s*([^<]+)\s*</);
+      if (!altTitleM) continue;
+    }
+    const href = titleM ? titleM[1] : '';
+    const slug = href.split('/').filter(Boolean).pop() || '';
+    
+    // Location
+    const locM = card.match(/EventCard-location[^>]*>[\s\S]*?<strong>([\s\S]*?)<\/strong>/);
+    const place = locM ? locM[1].replace(/<br\s*\/?>/g,', ').replace(/<[^>]*>/g,'').replace(/\s+/g,' ').trim() : '';
+    
+    // Date
+    const dateM = card.match(/EventCard-date[^>]*>[\s\S]*?datetime="(\d{4}-\d{2}-\d{2})"/);
+    const date = dateM ? dateM[1] : '';
+    
+    // Time
+    const timeEls = [...card.matchAll(/EventCard-time[\s\S]*?<time datetime="(\d{2}\.\d{2})">([^<]+)<\/time>/g)];
+    let time = '';
+    if (timeEls.length >= 2) {
+      time = timeEls[0][2].trim() + '-' + timeEls[timeEls.length-1][2].trim();
+    } else if (timeEls.length === 1) {
+      time = timeEls[0][2].trim();
+    }
+    
+    results.push({title, slug, date, time, place: place || 'Göteborg', free: true,
+      source: 'abf', link: 'https://www.abf.se' + href});
+  }
+  return results;
+}
+
+function renderAbf(containerId, data) {
   const container = document.getElementById(containerId);
   const statsBar = document.getElementById('abfStatsBar');
   if (data.length === 0) { container.innerHTML = '<div class="empty-state"><div class="icon">🔍</div><p>没有找到</p></div>'; statsBar.classList.add('show'); return; }
   statsBar.classList.add('show');
   const groups = {};
-  for (const e of data) { const k = isKurser ? e.start : e.date; if (!groups[k]) groups[k] = []; groups[k].push(e); }
+  for (const e of data) { const k = e.start || e.date; if (!groups[k]) groups[k] = []; groups[k].push(e); }
   let html = '';
+  const renderedEvents = [];
   for (const ds of Object.keys(groups).sort()) {
     const de = groups[ds]; const d = new Date(ds);
-    html += '<div class="date-group"><div class="date-label">📅 '+(d.getMonth()+1)+'月'+d.getDate()+'日<span class="count">'+de.length+'</span></div>';
+    if (isNaN(d.getTime())) continue;
+    html += '<div class="date-group"><div class="date-label">📅 ' + (d.getMonth()+1) + '月' + d.getDate() + '日 ' + ['周日','周一','周二','周三','周四','周五','周六'][d.getDay()] + '<span class="count">' + de.length + '</span></div>';
     for (const e of de) {
-      const cd = e.cn ? ' <span class="cn">/ '+e.cn+'</span>' : '';
-      const lu = 'https://www.abf.se/vast/kurs/'+e.slug;
-      html += '<div class="event-card"><div class="event-title"><a href="'+lu+'" target="_blank" rel="noopener">'+e.title+cd+'</a></div><div class="event-meta">';
-      if (isKurser) html += '<span>📆 '+e.times+'</span><span>📅 '+e.start+'</span><span>⏰ '+e.time+'</span><span>📍 '+e.place+'</span>'+(e.price?'<span>💰 '+e.price+'</span>':(e.free?'<span class="badge badge-free">🆓 免费</span>':'<span class="badge badge-paid">🎫 收费</span>'));
-      else html += '<span>📅 '+e.date+'</span><span>⏰ '+e.time+'</span><span>📍 '+e.place+'</span>';
+      renderedEvents.push({...e});
+      const cd = e.cn ? ' <span class="cn">/ ' + e.cn + '</span>' : '';
+      const lu = e.link || ('https://www.abf.se/vast/kurs/' + e.slug + '/');
+      html += '<div class="event-card"><div class="event-title"><a href="' + lu + '" target="_blank" rel="noopener">' + e.title + cd + '</a></div><div class="event-meta">';
+      html += '<span>⏰ ' + (e.time || '—') + '</span><span>📍 ' + (e.place || '—') + '</span>';
+      if (e.times) html += '<span>📆 ' + e.times + '</span>';
+      if (e.price) html += '<span class="badge badge-paid">💰 ' + e.price + '</span>';
+      else if (e.free) html += '<span class="badge badge-free">🆓 免费</span>';
+      if (e.summary) html += '<span style="color:#64748b;font-size:0.8rem">' + e.summary + '</span>';
       html += '</div></div>';
     }
     html += '</div>';
   }
-  container.innerHTML = html; document.getElementById('abfStatTotal').textContent = data.length;
+  container.innerHTML = html;
+  document.getElementById('abfStatTotal').textContent = data.length;
+  addInterestButtons(container, renderedEvents);
 }
 
 async function fetchAbfKurser() {
   if (isFetchingAbf) return; isFetchingAbf = true;
-  const btn = document.getElementById('fetchAbfKurser'); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 获取中...';
+  const btn = document.getElementById('fetchAbfKurser');
+  const otherBtn = document.getElementById('fetchAbfEvent');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 获取中...';
+  if (otherBtn) otherBtn.disabled = true;
   const pc = document.getElementById('abfProgressContainer'); const pf = document.getElementById('abfProgressFill');
   const pt = document.getElementById('abfProgressText'); const pd = document.getElementById('abfProgressDetail');
-  pc.classList.add('show'); pf.style.width = '0%'; pt.textContent = '正在获取 ABF 课程...';
-  abfKurserEvents = []; const total = ABF_KURSER.length;
-  for (let i = 0; i < total; i++) {
-    abfKurserEvents.push(ABF_KURSER[i]);
-    pf.style.width = Math.round(((i+1)/total)*100)+'%';
-    pt.textContent = '已加载 '+(i+1)+'/'+total+' 个课程';
-    pd.textContent = ABF_KURSER[i].cn||ABF_KURSER[i].title;
-    await sleep(80);
+  pc.classList.add('show'); pf.style.width = '0%'; pt.textContent = '正在连接 abf.se ...';
+  abfKurserEvents = [];
+  
+  try {
+    const workerUrl = 'https://plain-meadow-437c.dishkun2012.workers.dev/api/abf';
+    // First request to get total count and page 1
+    let page = 1;
+    let allCourses = [];
+    let totalPages = 1;
+    
+    while (page <= totalPages && page <= 20) {
+      const resp = await fetch(workerUrl + '?type=course&page=' + page);
+      if (!resp.ok) throw new Error('Worker unavailable');
+      const html = await resp.text();
+      
+      // Extract total pages from pagination
+      if (page === 1) {
+        const pageLinks = [...html.matchAll(/page=(\d+)/g)];
+        const pages = pageLinks.map(m => parseInt(m[1]));
+        if (pages.length > 0) totalPages = Math.max(...pages);
+      }
+      
+      const courses = parseAbfCourseCards(html);
+      allCourses = allCourses.concat(courses);
+      
+      pf.style.width = Math.min(100, Math.round((page / totalPages) * 100)) + '%';
+      pt.textContent = '已获取第 ' + page + '/' + totalPages + ' 页';
+      pd.textContent = '已找到 ' + allCourses.length + ' 个课程';
+      
+      if (courses.length === 0) break;
+      page++;
+      await sleep(80);
+    }
+    
+    abfKurserEvents = allCourses;
+    pf.style.width = '100%';
+    pt.textContent = '✅ 完成！共 ' + allCourses.length + ' 个课程（实时）';
+  } catch (e) {
+    console.log('ABF Worker unavailable:', e.message);
+    pt.textContent = '无法连接 abf.se，使用本地缓存...';
+    abfKurserEvents = [];
+    for (let i = 0; i < ABF_KURSER_FALLBACK.length; i++) {
+      abfKurserEvents.push({...ABF_KURSER_FALLBACK[i], source: 'abf'});
+      pf.style.width = Math.round(((i+1)/ABF_KURSER_FALLBACK.length)*100) + '%';
+      pt.textContent = '已加载 ' + (i+1) + '/' + ABF_KURSER_FALLBACK.length + ' 个（缓存）';
+      await sleep(40);
+    }
+    pt.textContent = '✅ 完成！共 ' + ABF_KURSER_FALLBACK.length + ' 个课程（缓存）';
   }
-  pf.style.width = '100%'; pt.textContent = '✅ 完成！共 '+total+' 个课程'; pd.textContent = '';
-  btn.disabled = false; btn.innerHTML = '📖 重新获取课程'; isFetchingAbf = false;
-  renderAbf('abfEventsContainer', abfKurserEvents, true);
+  pd.textContent = '数据来自 abf.se/vast/kurs-sok';
+  btn.disabled = false; btn.innerHTML = '📖 重新获取课程';
+  if (otherBtn) otherBtn.disabled = false;
+  isFetchingAbf = false;
+  
+  document.getElementById('abfEventsContainer').innerHTML = '<div class="empty-state"><div class="icon">🔄</div><p>正在加载，请稍……</p></div>';
+  await enrichEvents(abfKurserEvents, {}, e => e.slug).catch(() => {});
+  renderAbf('abfEventsContainer', abfKurserEvents);
 }
 
 async function fetchAbfEvent() {
   if (isFetchingAbf) return; isFetchingAbf = true;
-  const btn = document.getElementById('fetchAbfEvent'); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 获取中...';
+  const btn = document.getElementById('fetchAbfEvent');
+  const otherBtn = document.getElementById('fetchAbfKurser');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 获取中...';
+  if (otherBtn) otherBtn.disabled = true;
   const pc = document.getElementById('abfProgressContainer'); const pf = document.getElementById('abfProgressFill');
   const pt = document.getElementById('abfProgressText'); const pd = document.getElementById('abfProgressDetail');
-  pc.classList.add('show'); pf.style.width = '0%'; pt.textContent = '正在获取 ABF 活动...';
-  abfKurserEvents = []; const total = ABF_EVENTS.length;
-  for (let i = 0; i < total; i++) {
-    abfKurserEvents.push(ABF_EVENTS[i]);
-    pf.style.width = Math.round(((i+1)/total)*100)+'%';
-    pt.textContent = '已加载 '+(i+1)+'/'+total+' 个活动';
-    pd.textContent = ABF_EVENTS[i].cn||ABF_EVENTS[i].title;
-    await sleep(80);
+  pc.classList.add('show'); pf.style.width = '0%'; pt.textContent = '正在连接 abf.se ...';
+  abfKurserEvents = [];
+  
+  try {
+    const workerUrl = 'https://plain-meadow-437c.dishkun2012.workers.dev/api/abf';
+    const resp = await fetch(workerUrl + '?type=event&page=1');
+    if (!resp.ok) throw new Error('Worker unavailable');
+    const html = await resp.text();
+    
+    const events = parseAbfEventCards(html);
+    abfKurserEvents = events;
+    
+    pf.style.width = '100%';
+    pt.textContent = '✅ 完成！共 ' + events.length + ' 个活动（实时）';
+  } catch (e) {
+    console.log('ABF Worker unavailable:', e.message);
+    pt.textContent = '无法连接 abf.se，使用本地缓存...';
+    abfKurserEvents = [];
+    for (let i = 0; i < ABF_EVENTS_FALLBACK.length; i++) {
+      abfKurserEvents.push({...ABF_EVENTS_FALLBACK[i], source: 'abf'});
+      pf.style.width = Math.round(((i+1)/ABF_EVENTS_FALLBACK.length)*100) + '%';
+      pt.textContent = '已加载 ' + (i+1) + '/' + ABF_EVENTS_FALLBACK.length + ' 个（缓存）';
+      await sleep(40);
+    }
+    pt.textContent = '✅ 完成！共 ' + ABF_EVENTS_FALLBACK.length + ' 个活动（缓存）';
   }
-  pf.style.width = '100%'; pt.textContent = '✅ 完成！共 '+total+' 个活动'; pd.textContent = '';
-  btn.disabled = false; btn.innerHTML = '🎭 重新获取活动'; isFetchingAbf = false;
-  renderAbf('abfEventsContainer', abfKurserEvents, false);
+  pd.textContent = '数据来自 abf.se/vast/kurs-sok';
+  btn.disabled = false; btn.innerHTML = '🎭 重新获取活动';
+  if (otherBtn) otherBtn.disabled = false;
+  isFetchingAbf = false;
+  
+  document.getElementById('abfEventsContainer').innerHTML = '<div class="empty-state"><div class="icon">🔄</div><p>正在加载，请稍……</p></div>';
+  await enrichEvents(abfKurserEvents, {}, e => e.slug).catch(() => {});
+  renderAbf('abfEventsContainer', abfKurserEvents);
 }
 
+
+
+
+// ========== INTERESTED ==========
+function buildInterestInfo(e, key) {
+  const link = getEventLink(e, key);
+  return {
+    t: e.title || key || '',
+    c: e.cn || '',
+    tm: e.time || '',
+    dt: e.date || e.start || '',
+    l: link
+  };
+}
+
+function getEventLink(e, key) {
+  if (e.link) return e.link;
+  if (e.source === 'abf') return e.link || ('https://www.abf.se/vast/kurs/' + (e.slug || key) + '/');
+  if (e.aid) return 'https://goteborg.se/wps/portal/kalendarium/kalendarium-start?activityId=' + e.aid;
+  if (e.full !== undefined) return 'https://kompissverige.se/activities/' + (e.slug || key) + '/';
+  if (e.times || e.start) return e.link || ('https://www.abf.se/vast/kurs/' + (e.slug || key) + '/');
+  if (e.slug) return 'https://www.goteborg.com/en/events/' + e.slug;
+  return '#';
+}
+
+function getFullInterestStore() {
+  try {
+    const data = JSON.parse(localStorage.getItem('gbi_full') || '{}');
+    return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+  } catch(e) {
+    return {};
+  }
+}
+
+function setFullInterestStore(store) {
+  localStorage.setItem('gbi_full', JSON.stringify(store));
+}
+
+function cacheInterestInfo(key, info) {
+  if (!key || !info) return;
+  _info[key] = info;
+  const selected = getInterests();
+  if (selected.includes(key)) {
+    const fullStore = getFullInterestStore();
+    fullStore[key] = info;
+    setFullInterestStore(fullStore);
+  }
+}
+
+function addInterestButtons(container, events) {
+  const cards = container.querySelectorAll('.event-card');
+  for (let i = 0; i < Math.min(cards.length, events.length); i++) {
+    const e = events[i];
+    const key = e.slug || e.aid || '';
+    if (!key) continue;
+    cacheInterestInfo(key, buildInterestInfo(e, key));
+    if (cards[i].querySelector('.interest-btn')) continue;
+    const btn = document.createElement('span'); btn.className = 'interest-btn';
+    btn.setAttribute('data-key', key);
+    btn.setAttribute('role', 'button');
+    btn.setAttribute('aria-label', '加入感兴趣');
+    btn.textContent = getInterests().includes(key) ? '♥' : '♡';
+    btn.onclick = function() { toggleInterest(key); };
+    const meta = cards[i].querySelector('.event-meta');
+    if (meta) meta.parentNode.insertBefore(btn, meta.nextSibling);
+  }
+}
+
+const _info = getFullInterestStore();
+function getInterests() { try { return JSON.parse(localStorage.getItem('gbi')||'[]'); } catch(e) { return []; } }
+function setInterests(list) { localStorage.setItem('gbi', JSON.stringify(list)); }
+function toggleInterest(key) {
+  let list = getInterests(); const i = list.indexOf(key);
+  if (i >= 0) { list.splice(i, 1); } 
+  else {
+    list.push(key);
+    if (!_info[key]) lookupAndStore(key);
+  }
+  setInterests(list);
+  // Also store full info in localStorage
+  const fullStore = getFullInterestStore();
+  if (i >= 0) delete fullStore[key];
+  else if (_info[key]) fullStore[key] = _info[key];
+  setFullInterestStore(fullStore);
+  refreshSidebar();
+  refreshIcons();
+}
+function lookupAndStore(key) {
+  // Search all data sources
+  let found, source = '';
+  if (typeof EVENT_DATA !== 'undefined') { found = EVENT_DATA.find(e => e.slug === key); if (found) source = 'goteborg'; }
+  if (!found && typeof GBG_SAMPLE !== 'undefined') { found = GBG_SAMPLE.find(e => e.aid === key); if (found) source = 'gbg'; }
+  if (!found && typeof KOMPIS_DATA !== 'undefined') { found = KOMPIS_DATA.find(e => e.slug === key); if (found) source = 'kompis'; }
+  if (!found && typeof ABF_KURSER_FALLBACK !== 'undefined') { found = ABF_KURSER_FALLBACK.find(e => e.slug === key); if (found) source = 'abf'; }
+  if (!found && typeof ABF_EVENTS_FALLBACK !== 'undefined') { found = ABF_EVENTS_FALLBACK.find(e => e.slug === key); if (found) source = 'abf'; }
+  if (!found) return;
+  
+  let lnk = '#';
+  if (source === 'goteborg') lnk = 'https://www.goteborg.com/en/events/' + found.slug;
+  else if (source === 'kompis') lnk = found.link || ('https://kompissverige.se/activities/' + found.slug + '/');
+  else if (source === 'gbg') lnk = 'https://goteborg.se/wps/portal/kalendarium/kalendarium-start?activityId=' + found.aid;
+  else if (source === 'abf') lnk = 'https://www.abf.se/vast/kurs/' + found.slug + '/';
+
+  let dateValue = found.date || found.start || '';
+  let timeValue = found.time || '';
+  if (!dateValue && found.dates) {
+    const dates = Object.keys(found.dates).sort();
+    dateValue = dates[0] || '';
+    timeValue = found.dates[dateValue] || timeValue;
+  }
+  
+  _info[key] = {
+    t: found.title || key,
+    c: found.cn || '',
+    tm: timeValue,
+    dt: dateValue,
+    l: lnk
+  };
+}
+function parseInterestDate(info) {
+  const rawDate = (info && info.dt ? String(info.dt) : '').trim();
+  const match = rawDate.match(/\d{4}-\d{2}-\d{2}/);
+  const rawTime = (info && info.tm ? String(info.tm) : '').trim();
+  const fallbackYear = match ? match[0].slice(0, 4) : String(new Date().getFullYear());
+  const textDate = parseSwedishDateText(rawTime, fallbackYear) || parseSwedishDateText(rawDate, fallbackYear);
+  if (!match && !textDate) return null;
+  const datePart = textDate || match[0];
+  const timeMatch = rawTime.match(/(\d{1,2})[:.](\d{2})/);
+  const hour = timeMatch ? timeMatch[1].padStart(2, '0') : '00';
+  const minute = timeMatch ? timeMatch[2] : '00';
+  const date = new Date(datePart + 'T' + hour + ':' + minute + ':00');
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+function parseSwedishDateText(text, year) {
+  const monthMap = {
+    januari:'01', jan:'01', februari:'02', feb:'02', mars:'03', mar:'03',
+    april:'04', apr:'04', maj:'05', juni:'06', jun:'06', juli:'07', jul:'07',
+    augusti:'08', aug:'08', september:'09', sep:'09', oktober:'10', okt:'10',
+    november:'11', nov:'11', december:'12', dec:'12'
+  };
+  const match = String(text || '').toLowerCase().match(/\b(\d{1,2})\s+(januari|jan|februari|feb|mars|mar|april|apr|maj|juni|jun|juli|jul|augusti|aug|september|sep|oktober|okt|november|nov|december|dec)\b/);
+  if (!match) return null;
+  return String(year) + '-' + monthMap[match[2]] + '-' + match[1].padStart(2, '0');
+}
+function getInterestInfo(key) {
+  if (!_info[key]) lookupAndStore(key);
+  return _info[key] || {t:key, c:'', tm:'', dt:'', l:'#'};
+}
+function sortInterestsByTime() {
+  const list = getInterests();
+  const sorted = [...list].sort((a, b) => {
+    const da = parseInterestDate(getInterestInfo(a));
+    const db = parseInterestDate(getInterestInfo(b));
+    if (da && db) return da - db;
+    if (da) return -1;
+    if (db) return 1;
+    return String(getInterestInfo(a).t || a).localeCompare(String(getInterestInfo(b).t || b), 'zh-Hans');
+  });
+  setInterests(sorted);
+  refreshSidebar();
+  refreshIcons();
+}
+function removeExpiredInterests() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const fullStore = getFullInterestStore();
+  const kept = [];
+  for (const key of getInterests()) {
+    const date = parseInterestDate(getInterestInfo(key));
+    if (date && date < today) {
+      delete _info[key];
+      delete fullStore[key];
+    } else {
+      kept.push(key);
+      if (_info[key]) fullStore[key] = _info[key];
+    }
+  }
+  setInterests(kept);
+  setFullInterestStore(fullStore);
+  refreshSidebar();
+  refreshIcons();
+}
+function refreshSidebar() {
+  const list = getInterests();
+  const btn = document.getElementById('sidebarToggle'); if (btn) btn.textContent = '❤️ '+list.length;
+  const div = document.getElementById('interestList'); if (!div) return;
+  if (list.length === 0) { div.innerHTML = '<p style="color:#94a3b8;font-size:0.85rem">还没有感兴趣的活动</p>'; return; }
+  div.innerHTML = '';
+  for (const key of list) {
+    const info = getInterestInfo(key);
+    const d = document.createElement('div'); d.className = 'item';
+    d.innerHTML = '<span class="rm" onclick="toggleInterest(\''+key+'\')">\u2716</span> <a href="'+info.l+'" target="_blank">'+info.t+'</a>';
+    if (info.c) d.innerHTML += ' <span style="color:#64748b;font-size:0.8rem">/ '+info.c+'</span>';
+    if (info.dt) d.innerHTML += ' <span style="color:#94a3b8;font-size:0.75rem">\u{1f4c5} '+info.dt+'</span>';
+    if (info.tm) d.innerHTML += ' <span style="color:#94a3b8;font-size:0.75rem">\u23f0 '+info.tm+'</span>';
+    div.appendChild(d);
+  }
+}
+function refreshIcons() {
+  document.querySelectorAll('.interest-btn').forEach(el => {
+    const active = getInterests().includes(el.getAttribute('data-key'));
+    el.textContent = active ? '♥' : '♡';
+    el.classList.toggle('active', active);
+    el.setAttribute('aria-label', active ? '取消感兴趣' : '加入感兴趣');
+  });
+}
+document.addEventListener('DOMContentLoaded', () => { refreshSidebar(); refreshIcons(); });
 </script>
+
+<div class="sidebar" id="interestSidebar">
+  <h3 style="margin-bottom:0.5rem">❤️ 我感兴趣的活动</h3>
+  <div class="sidebar-actions">
+    <button class="sidebar-action" type="button" onclick="sortInterestsByTime()">按时间排序</button>
+    <button class="sidebar-action" type="button" onclick="removeExpiredInterests()">删除过期</button>
+  </div>
+  <div id="interestList"><p style="color:#94a3b8;font-size:0.85rem">还没有感兴趣的活动</p></div>
+</div>
+<button class="sidebar-toggle" id="sidebarToggle" onclick="document.getElementById('interestSidebar').classList.toggle('open')">❤️ 0</button>
+
 </body>
 </html>
