@@ -401,7 +401,7 @@
     🟢 只看可报名活动
   </button>
   <button class="btn btn-outline" id="filterMotesplatsBtn" onclick="toggleMotesplatsFilter()">
-    🏢 过滤mötesplats活动
+    🏢 过滤mötesplats+在线活动
   </button>
 </div>
 
@@ -916,10 +916,15 @@ async function fetchKompisEvents() {
     const eventsToCheck = [];
     
     for (const block of blocks.slice(1)) {
-      if (!block.includes('Göteborg</span>')) continue;
+      // 排除未分配地区(data-id="")的活动，它们不在网站上实际显示
+      if (block.includes('data-id=""')) continue;
+      const isOnline = block.includes('Online</span>');
+      if (!block.includes('Göteborg</span>') && !isOnline) continue;
       const titleM = block.match(/<div class="title">(.*?)<\/div>/);
       const timeM = block.match(/<div class="time">\s*(.*?)\s*<\/div>/);
-      const locM = block.match(/<span class="omrade">Göteborg<\/span>\s*(.*?)\s*<\/div>/);
+      const areaM = block.match(/<span class="omrade">([^<]+)<\/span>/);
+      const area = areaM ? areaM[1].trim() : '';
+      const locM = block.match(new RegExp('<span class="omrade">' + area.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '<\\/span>\\s*(.*?)\\s*<\\/div>'));
       const addrM = block.match(/<div class="location">\s*(.*?)\s*<\/div>/);
       const descM = block.match(/<div class="description ">\s*(.*?)\s*<\/div>/);
       const linkM = block.match(/href="(\/activities\/[^"]+)"|href="(https:\/\/kompissverige\.se\/activities\/[^"]+)"/);
@@ -928,7 +933,8 @@ async function fetchKompisEvents() {
       if (!titleM) continue;
       const title = titleM[1].replace(/&#8211;/g,'\u2013').replace(/&amp;/g,'&').replace(/<[^>]*>/g,'').trim();
       const time = timeM ? timeM[1].trim() : '';
-      const loc = locM ? locM[1].replace(/<[^>]*>/g,'').trim() : '';
+      let loc = locM ? locM[1].replace(/<[^>]*>/g,'').trim() : '';
+      if (isOnline) loc = 'Online / 在线';
       const addr = addrM ? addrM[1].replace(/<[^>]*>/g,'').trim() : '';
       const desc = descM ? descM[1].replace(/<br\s*\/?>/g,' ').replace(/<[^>]*>/g,'').trim() : '';
       const link = linkM ? (linkM[2] || 'https://kompissverige.se' + linkM[1]) : '';
@@ -938,11 +944,22 @@ async function fetchKompisEvents() {
       const monthMap = {jan:'01',feb:'02',mar:'03',apr:'04',maj:'05',jun:'06',jul:'07',aug:'08',sep:'09',okt:'10',nov:'11',dec:'12'};
       const m = monthMap[(month||'').toLowerCase()] || '01';
       const cnInfo = getCnForEvent(title, loc||addr, m2CnLookup, slug);
-      const ev = {title,date:`2026-${m}-${day.padStart(2,'0')}`,time,place:loc||addr,full:false,
+      const dateStr = `2026-${m}-${day.padStart(2,'0')}`;
+      // 跳过已过期的活动
+      const evDate = new Date(dateStr);
+      const today = new Date(); today.setHours(0,0,0,0);
+      if (evDate < today) continue;
+      const ev = {title,date:dateStr,time,place:loc||addr,full:false,
         summary: cnInfo.summary || desc.slice(0,80),
         cn: cnInfo.cn || '', slug, link};
       kompisEvents.push(ev);
-      if (!title.toLowerCase().includes('m\u00f6tesplats')) eventsToCheck.push(ev);
+      // Mötesplats 和 Online 活动无需检查详情页，直接标记为可报名
+      const isMotesplats = title.toLowerCase().includes('m\u00f6tesplats');
+      if (isMotesplats || isOnline) {
+        ev.full = false;
+      } else {
+        eventsToCheck.push(ev);
+      }
     }
     
     pf.style.width = '50%';
@@ -997,7 +1014,7 @@ async function fetchKompisEvents() {
 function renderKompisEvents() {
   const container = document.getElementById('kompisEventsContainer');
   let filtered = showOpenOnly ? kompisEvents.filter(e => !e.full) : kompisEvents;
-  if (hideMotesplats) filtered = filtered.filter(e => !e.title.toLowerCase().includes('mötesplats') && !e.place.toLowerCase().includes('mötesplats'));
+  if (hideMotesplats) filtered = filtered.filter(e => !e.title.toLowerCase().includes('mötesplats') && !e.place.toLowerCase().includes('mötesplats') && e.place !== 'Online / 在线');
   const shown = renderPages['kompisEventsContainer'] || 0;
   const batch = filtered.slice(0, shown + PAGE_SIZE);
   renderPages['kompisEventsContainer'] = batch.length;
@@ -1064,7 +1081,7 @@ function loadMoreKompis() { renderKompisEvents(); }
 
 function updateKompisStats() {
   let filtered = showOpenOnly ? kompisEvents.filter(e => !e.full) : kompisEvents;
-  if (hideMotesplats) filtered = filtered.filter(e => !e.title.toLowerCase().includes('mötesplats') && !e.place.toLowerCase().includes('mötesplats'));
+  if (hideMotesplats) filtered = filtered.filter(e => !e.title.toLowerCase().includes('mötesplats') && !e.place.toLowerCase().includes('mötesplats') && e.place !== 'Online / 在线');
   const openCount = filtered.filter(e => !e.full).length;
   const fullCount = kompisEvents.filter(e => e.full).length;
   document.getElementById('kompisStatTotal').textContent = filtered.length;
@@ -1077,10 +1094,10 @@ function toggleMotesplatsFilter() {
   const btn = document.getElementById('filterMotesplatsBtn');
   if (hideMotesplats) {
     btn.classList.add('active');
-    btn.textContent = '🏢 包含mötesplats活动';
+    btn.textContent = '🏢 显示mötesplats+在线活动';
   } else {
     btn.classList.remove('active');
-    btn.textContent = '🏢 过滤mötesplats活动';
+    btn.textContent = '🏢 过滤mötesplats+在线活动';
   }
   updateKompisStats();
   renderKompisEvents();
@@ -1949,57 +1966,238 @@ if ('serviceWorker' in navigator) {
 // Worker 需添加路由: GET /api/abf?type=course&page=N 或 ?type=event&page=N
 // Worker 代码见部署说明顶部
 
-const ABF_KURSER_FALLBACK = [
-  {title:"Sommarkurs - Drejning 8-12 juni",start:"2026-06-08",time:"09.30-15.30",times:"5 gånger",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-sommarkurs-2026-v24-drejning-8-12-juni-3891299"},
-  {title:"Sommarkurs - Måla i Majorna! 8-12 juni",start:"2026-06-08",time:"10.00-16.15",times:"5 gånger",place:"Kustens Hus, Taubegatan 9 Göteborg",free:false,price:"3700:-",slug:"konst-sommarkurs-2026-v24-mala-i-majorna-3891914"},
-  {title:"Att vara sig själv på jobbet",start:"2026-06-09",time:"18.00-20.00",times:"1 gånger",place:"ABF Olof Palmes Plats 1, Olof Palmes Plats 1 Göteborg",free:true,price:"",slug:"workshop-att-vara-sig-sjalv-pa-jobbet-ayotzinapa-forening-3935013"},
-  {title:"Skapa ringblommor till Día de Muertos",start:"2026-06-13",time:"11.00-13.30",times:"5 gånger",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:true,price:"",slug:"skapa-ringblommor-cempasushil-blommor-3931432"},
-  {title:"Minne i rörelse - skapa fjärilar och dekorativa föremål",start:"2026-06-13",time:"11.00-13.30",times:"5 gånger",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:true,price:"",slug:"minne-i-rorelse-skapa-fjarilar-3931505"},
-  {title:"Levande Cartoneria - Calaveras och catrinas",start:"2026-06-13",time:"11.00-13.15",times:"5 gånger",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:true,price:"",slug:"levande-cartoneria-calaveras-och-catrinas-3931509"},
-  {title:"Sommarkurs - Fri form i keramik 22-26 juni",start:"2026-06-22",time:"09.30-15.30",times:"5 gånger",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-sommarkurs-2026-v26-fri-form-22-26-juni-3913229"},
-  {title:"Sommarkurs - Drejning 29 juni-3 juli",start:"2026-06-29",time:"09.30-15.30",times:"5 gånger",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-sommarkurs-2026-v27-drejning-29-juni-3-juli-3913674"},
-  {title:"Sommarkurs Svenska för nybörjare",start:"2026-07-06",time:"09.15-12.30",times:"8 gånger",place:"ABF Partille, Gamla Kronvägen 56 Partille",free:true,price:"",slug:"svenska-for-nyborjare-sprak-och-gemenskap-3930787"},
-  {title:"Sommarkurs Akrylmålning från grunden",start:"2026-07-06",time:"09.15-12.30",times:"8 gånger",place:"ABF Partille, Gamla Kronvägen 56 Partille",free:true,price:"",slug:"akrylmalning-fran-grunden-grupp-1-3932684"},
-  {title:"Sommarkurs Svenska i vardagen - samtal och samhällsliv",start:"2026-07-06",time:"09.15-12.30",times:"8 gånger",place:"ABF Partille, Gamla Kronvägen 56 Partille",free:true,price:"",slug:"svenska-i-vardagen-samtal-och-samhallsliv-3930802"},
-  {title:"Sommarkurs Svensk prosodi",start:"2026-07-07",time:"09.15-12.30",times:"8 gånger",place:"ABF Partille, Gamla Kronvägen 56 Partille",free:true,price:"",slug:"lar-dig-bli-forstadd-svensk-prosodi-3930808"},
-  {title:"Sommarkurs Akrylmålning från grunden",start:"2026-07-07",time:"09.15-12.30",times:"8 gånger",place:"ABF Partille, Gamla Kronvägen 56 Partille",free:true,price:"",slug:"akrylmalning-fran-grunden-grupp-2-3930926"},
-  {title:"Förberedelsekurs inför medborgarskapsprovet i samhällskunskap",start:"2026-08-17",time:"17.00-19.15",times:"10 gånger",place:"Gamlestadens Medborgarhus, Brahegatan 11C Göteborg",free:true,price:"",slug:"forbredelsekurs-infor-medborgarskapsprovet-i-samhallskunskap-3934360"},
-  {title:"Nyfiken på AI och hur du kan använda det?",start:"2026-08-20",time:"09.30-11.15",times:"5 gånger",place:"ABF Mölndal, Frölundagatan 37 Mölndal",free:true,price:"",slug:"ai-artificiell-intelligens-3934522"},
-  {title:"Mobilens appar för seniorer",start:"2026-08-25",time:"09.30-11.15",times:"6 gånger",place:"ABF Mölndal, Frölundagatan 37 Mölndal",free:true,price:"",slug:"mobilens-appar-for-seniorer-3934542"},
-  {title:"Hållbarhetsverkstan - Spara på maten",start:"2026-09-01",time:"14.00-16.15",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-spara-pa-maten-3932099"},
-  {title:"Hållbarhetsverkstan - Stickning",start:"2026-09-02",time:"14.00-16.15",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-stickning-3933339"},
-  {title:"Hållbarhetsverkstan - Stickning",start:"2026-09-02",time:"18.00-20.15",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-stickning-3933341"},
-  {title:"Teaterspaning",start:"2026-09-03",time:"19.00-21.30",times:"15 gånger",place:"Egen",free:false,price:"3050:-",slug:"samhalle-teaterspaning-3918364"},
-  {title:"Förnya dina textilier med enkla medel",start:"2026-09-11",time:"10.00-13.00",times:"1 gånger",place:"Öckerö Bibliotek",free:true,price:"",slug:"fornya-dina-textilier-med-enkla-medel-3928921"},
-  {title:"Hållbarhetsverkstan - Ung impact",start:"2026-09-15",time:"17.30-19.45",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-ung-impact-3932100"},
-  {title:"Målning med Synskadades Riksförbund",start:"2026-09-16",time:"10.30-13.30",times:"12 gånger",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:true,price:"",slug:"malning-srf-onsdag-1030-3924726"},
-  {title:"Akustisk gitarr för nybörjare - Orust",start:"2026-09-22",time:"17.00-18.30",times:"10 gånger",place:"ABF Orust, Skansvägen 4B Svanesund",free:false,price:"1350:-",slug:"gitarr-grupp-1-orust-3911743"},
-  {title:"Akustisk gitarr för nybörjare - Orust",start:"2026-09-22",time:"18.45-20.15",times:"10 gånger",place:"ABF Orust, Skansvägen 4B Svanesund",free:false,price:"1350:-",slug:"gitarr-grupp-2-orust-3911803"},
-  {title:"Decoupage Unga Örnar",start:"2026-09-26",time:"13.30-16.00",times:"4 gånger",place:"ABF Partille, Gamla Kronvägen 56 Partille",free:true,price:"",slug:"decoupage-3876339"},
-  {title:"Hållbarhetsverkstan - Skapa med trasor och stuvar",start:"2026-09-28",time:"14.00-16.15",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-skapa-med-trasor-och-stuvar-3933785"},
-  {title:"Hållbarhetsverkstan - Skapa med trasor och stuvar",start:"2026-09-28",time:"18.00-20.15",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-skapa-med-trasor-och-stuvar-3933787"},
-  {title:"Hållbarhetsverkstan - Växtfärgning",start:"2026-09-30",time:"14.00-16.15",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-vaxtfargning-3932101"},
-  {title:"Hållbarhetsverkstan - Växtfärgning",start:"2026-09-30",time:"18.00-20.15",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-vaxtfargning-3932102"},
-  {title:"Skrivarcirkel - kom igång att skriva, alla har något att berätta",start:"2026-10-15",time:"18.00-20.00",times:"8 gånger",place:"Humlan Tjörn, Wackenfeldts väg 4 Kållekärr",free:true,price:"",slug:"skrivarcirkel-kom-igang-att-skriva-alla-har-nagot-att-beratta-3927017"},
-  {title:"Hållbarhetsverkstan - Remake av kläder",start:"2026-10-28",time:"18.00-20.15",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-remake-av-klader-3932106"},
-  {title:"Hållbarhetsverkstan - Remake av kläder",start:"2026-10-28",time:"14.00-16.15",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-remake-av-klader-3932107"},
-  {title:"Hållbarhetsverkstan - Fixa julen med återbruk",start:"2026-11-25",time:"18.00-20.15",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-fixa-julen-med-aterbruk-3932109"},
-  {title:"Hållbarhetsverkstan - Fixa julen med återbruk",start:"2026-11-25",time:"14.00-16.15",times:"4 gånger",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 21 Kungälv",free:true,price:"",slug:"hallbarhetsverkstan-fixa-julen-med-aterbruk-3932110"}
+// ========== ABF 课程缓存数据（含中文名称）==========
+const ABF_KURSER = [
+  {title:"Skapa ringblommor till Día de Muertos",cn:"制作万寿菊——亡灵节",times:"5 gånger",start:"2026-06-13",time:"11.00-13.30",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:true,price:"",slug:"skapa-ringblommor-cempasushil-blommor-3931432"},
+  {title:"Minne i rörelse - skapa fjärilar och dekorativa föremål",cn:"运动中的记忆——制作蝴蝶和装饰品",times:"5 gånger",start:"2026-06-13",time:"11.00-13.30",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:true,price:"",slug:"minne-i-rorelse-skapa-fjarilar-3931505"},
+  {title:"Levande Cartoneria - Calaveras och catrinas",cn:"现场卡托内里亚——骷髅和卡翠娜",times:"5 gånger",start:"2026-06-13",time:"11.00-13.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:true,price:"",slug:"levande-cartoneria-calaveras-och-catrinas-3931509"},
+  {title:"Sommarkurs - Fri form i keramik 22-26 juni",cn:"暑期课程 - 陶瓷自由创作 6月22日至26日",times:"5 gånger",start:"2026-06-22",time:"09.30-15.30",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-sommarkurs-2026-v26-fri-form-22-26-juni-3913229"},
+  {title:"Sommarkurs - Drejning 29 juni-3 juli",cn:"暑期课程 - 拉坯 6月29日至7月3日",times:"5 gånger",start:"2026-06-29",time:"09.30-15.30",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-sommarkurs-2026-v27-drejning-29-juni-3-juli-3913674"},
+  {title:"Sommarkurs Svenska för nybörjare",cn:"暑期课程 - 瑞典语初学者",times:"8 gånger",start:"2026-07-06",time:"09.15-12.30",place:"ABF Partille, Gamla Kronvägen 56 Partille",free:true,price:"",slug:"svenska-for-nyborjare-sprak-och-gemenskap-3930787"},
+  {title:"Sommarkurs Svenska i vardagen - samtal och samhällsliv",cn:"暑期课程 - 日常瑞典语——对话与社会生活",times:"8 gånger",start:"2026-07-06",time:"09.15-12.30",place:"ABF Partille, Gamla Kronvägen 56 Partille",free:true,price:"",slug:"svenska-i-vardagen-samtal-och-samhallsliv-3930802"},
+  {title:"Sommarkurs Akrylmålning från grunden",cn:"暑期课程 - 丙烯画从基础开始",times:"8 gånger",start:"2026-07-06",time:"09.15-12.30",place:"ABF Partille, Gamla Kronvägen 56 Partille",free:true,price:"",slug:"akrylmalning-fran-grunden-grupp-1-3932684"},
+  {title:"Sommarkurs Svensk prosodi",cn:"暑期课程 - 瑞典语韵律",times:"8 gånger",start:"2026-07-07",time:"09.15-12.30",place:"ABF Partille, Gamla Kronvägen 56 Partille",free:true,price:"",slug:"lar-dig-bli-forstadd-svensk-prosodi-3930808"},
+  {title:"Sommarkurs Akrylmålning från grunden",cn:"暑期课程 - 丙烯画从基础开始(2)",times:"8 gånger",start:"2026-07-07",time:"09.15-12.30",place:"ABF Partille, Gamla Kronvägen 56 Partille",free:true,price:"",slug:"akrylmalning-fran-grunden-grupp-2-3930926"},
+  {title:"Workshop /Prova på: Forma med lera på Blå stället",cn:"工作坊/体验：在Blå Stället制作陶土",times:"1 gånger",start:"2026-08-10",time:"14.00-16.30",place:"Kulturhuset Blå Stället, Angereds torg 13 Angered",free:true,price:"",slug:"prova-pa-keramik-bla-stallet-angered-3930702"},
+  {title:"Teckning och pastell",cn:"素描与粉彩",times:"6 gånger",start:"2026-08-11",time:"17.15-19.45",place:"Kulturhuset Bergsjön, Bergsjöns Kulturhusväg 4A Göteborg",free:true,price:"",slug:"ht-omg-1-pastell-och-teckning-kulturhuset-i-bergsjon-3933026"},
+  {title:"Grafik och linoleumtryck",cn:"版画与油毡印刷",times:"6 gånger",start:"2026-08-11",time:"14.45-17.00",place:"Kulturhuset Bergsjön, Bergsjöns Kulturhusväg 4A Göteborg",free:true,price:"",slug:"ht-omg-1-konst-grafiklinoleumtryck-kulturhuset-i-bergsjon-3933027"},
+  {title:"Modellera i lera med fokus på porträtt",cn:"陶土雕塑——肖像",times:"6 gånger",start:"2026-08-16",time:"11.00-13.15",place:"Kulturhuset Bergsjön, Bergsjöns Kulturhusväg 4A Göteborg",free:true,price:"",slug:"ht-omg-1-konst-modellera-i-lera-portratt-3933070"},
+  {title:"Modellera i lera med fokus på anatomi",cn:"陶土雕塑——解剖学",times:"6 gånger",start:"2026-08-16",time:"13.30-15.45",place:"Kulturhuset Bergsjön, Bergsjöns Kulturhusväg 4A Göteborg",free:true,price:"",slug:"ht-omg-1-konst-modellera-i-lera-anatomi-kulturhuset-i-bergsjon-3933087"},
+  {title:"Forma med lera på Blå stället",cn:"在Blå Stället制作陶土",times:"6 gånger",start:"2026-08-17",time:"14.00-16.30",place:"Kulturhuset Blå Stället, Angereds torg 13 Angered",free:true,price:"",slug:"omg-1-htkeramik-bla-stallet-angered-3930697"},
+  {title:"Förberedelsekurs inför medborgarskapsprovet i samhällskunskap",cn:"公民考试预备课程",times:"10 gånger",start:"2026-08-17",time:"17.00-19.15",place:"Gamlestadens Medborgarhus, Braheg 11C",free:true,price:"",slug:"forbredelsekurs-infor-medborgarskapsprovet-i-samhallskunskap-3934360"},
+  {title:"Förberedelsekurs inför medborgarskapsprovet i samhällskunskap",cn:"公民考试预备课程(2)",times:"10 gånger",start:"2026-08-17",time:"09.45-12.00",place:"ABF Vågmästargården, Hisingsgatan 28 Göteborg",free:true,price:"",slug:"forbredelsekurs-infor-medborgarskapsprovet-i-samhallskunskap-3935568"},
+  {title:"Nyfiken på AI och hur du kan använda det?",cn:"好奇AI及如何使用？",times:"5 gånger",start:"2026-08-20",time:"09.30-11.15",place:"ABF Mölndal, Frölundagatan 37 Mölndal",free:true,price:"",slug:"ai-artificiell-intelligens-3934522"},
+  {title:"Keramik - måndag 18.00",cn:"陶瓷课 - 周一 18:00",times:"12 gånger",start:"2026-08-24",time:"18.00-21.00",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-gr24-3926970"},
+  {title:"Keramik-tisdag 18.00",cn:"陶瓷课 - 周二 18:00",times:"12 gånger",start:"2026-08-25",time:"18.00-21.00",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-gr03-3925196"},
+  {title:"Mobilens appar för seniorer",cn:"老年人手机应用",times:"6 gånger",start:"2026-08-25",time:"09.30-11.15",place:"ABF Mölndal, Frölundagatan 37 Mölndal",free:true,price:"",slug:"mobilens-appar-for-seniorer-3934542"},
+  {title:"Keramik - onsdag 18.30",cn:"陶瓷课 - 周三 18:30",times:"12 gånger",start:"2026-08-26",time:"18.30-21.30",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-gr20-3926955"},
+  {title:"Keramik - torsdag 18.30",cn:"陶瓷课 - 周四 18:30",times:"12 gånger",start:"2026-08-27",time:"18.30-21.30",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-gr01-3924872"},
+  {title:"Keramik-torsdag 09.00",cn:"陶瓷课 - 周四 09:00",times:"12 gånger",start:"2026-08-27",time:"09.00-12.00",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-gr04-3925200"},
+  {title:"Keramik - torsdag 15.00",cn:"陶瓷课 - 周四 15:00",times:"12 gånger",start:"2026-08-27",time:"15.00-18.00",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-gr18-3926938"},
+  {title:"Keramik-fredag 09.30",cn:"陶瓷课 - 周五 09:30",times:"12 gånger",start:"2026-08-28",time:"09.30-12.30",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-gr13-3926868"},
+  {title:"Keramik - lördag 10.00",cn:"陶瓷课 - 周六 10:00",times:"9 gånger",start:"2026-08-29",time:"10.00-13.00",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"2940:-",slug:"keramik-gr06-3925203"},
+  {title:"Spanska nybörjare",cn:"西班牙语初学者",times:"12 gånger",start:"2026-08-31",time:"17.30-19.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1930:-",slug:"sprak-spanska-nyborjare-3917816"},
+  {title:"Sömnad - måndag 18.00",cn:"缝纫 - 周一 18:00",times:"12 gånger",start:"2026-08-31",time:"18.00-20.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"2785:-",slug:"hantverk-somnad-3918580"},
+  {title:"Akustisk gitarr nybörjare",cn:"原声吉他初学者",times:"12 gånger",start:"2026-08-31",time:"19.00-20.30",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"2125:-",slug:"musik-gitarr-nyborjare-3918605"},
+  {title:"Akustisk gitarr avancerad",cn:"原声吉他进阶",times:"12 gånger",start:"2026-08-31",time:"17.15-18.45",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"2125:-",slug:"musik-akustisk-gitarr-fortsattningavancerad-3918607"},
+  {title:"Stickning + virkning varannan måndag",cn:"编织与钩针（每隔周一）",times:"8 gånger",start:"2026-08-31",time:"18.00-20.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1820:-",slug:"hantverk-stickning-och-virkning-varannan-mandag-3919202"},
+  {title:"Stickning + virkning varannan måndag",cn:"编织与钩针（每隔周一）(2)",times:"8 gånger",start:"2026-08-31",time:"15.30-17.45",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1820:-",slug:"hantverk-stickning-och-virkning-varannan-mandag-3919203"},
+  {title:"Dagateljé - Färgstudier",cn:"日间画室——色彩研究",times:"12 gånger",start:"2026-08-31",time:"10.00-14.45",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"3710:-",slug:"konst-gr08-dagatelje-fargstudier-3922322"},
+  {title:"Dagateljé - Måleri",cn:"日间画室——绘画",times:"15 gånger",start:"2026-08-31",time:"10.15-15.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"4160:-",slug:"konst-gr19-dagatelje-maleri-3922385"},
+  // === 更多课程（来自网站第5页起）===
+  {title:"Klarinett och tvärflöjt nybörjare",cn:"单簧管与长笛初学者",times:"12 gånger",start:"2026-08-31",time:"19.15-20.45",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1835:-",slug:"musik-tvarflojt-klarinett-nyborjare-3926486"},
+  {title:"Keramik - måndag 09.00",cn:"陶瓷课 - 周一 09:00",times:"12 gånger",start:"2026-08-31",time:"09.00-12.00",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-gr15-3926889"},
+  {title:"Keramik - måndag 13.00",cn:"陶瓷课 - 周一 13:00",times:"12 gånger",start:"2026-08-31",time:"13.00-15.15",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3120:-",slug:"keramik-gr16-3926896"},
+  {title:"Keramik - måndag 16.00",cn:"陶瓷课 - 周一 16:00",times:"12 gånger",start:"2026-08-31",time:"16.00-18.15",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3120:-",slug:"keramik-gr17-3926931"},
+  {title:"Keramik - måndag 18.30",cn:"陶瓷课 - 周一 18:30",times:"12 gånger",start:"2026-08-31",time:"18.30-21.30",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-gr21-3926961"},
+  {title:"Fri konst - Målarskolan i Mölndal",cn:"自由艺术——Mölndal绘画学校",times:"12 gånger",start:"2026-08-31",time:"17.30-20.00",place:"Mölndals Målarskola, Gamla Torget 41 Mölndal",free:false,price:"2311:-",slug:"fri-konst-mandag-3929675"},
+  {title:"Dans och rörelse 60+ fortsättning 1",cn:"舞蹈与运动60+ 中级1",times:"12 gånger",start:"2026-09-01",time:"09.00-10.30",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1365:-",slug:"dans-dans-och-rorelse-60-fortsattning-1-3918206"},
+  {title:"Klarinett och tvärflöjt fortsättning - avancerad",cn:"单簧管与长笛进阶",times:"12 gånger",start:"2026-09-01",time:"17.30-19.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1835:-",slug:"musik-tvarflojt-klarinett-fortsattning-avancerad-3918302"},
+  {title:"Klarinett och tvärflöjt nivå 3",cn:"单簧管与长笛三级",times:"12 gånger",start:"2026-09-01",time:"19.15-20.45",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1835:-",slug:"musik-tvarflojt-klarinett-fortsattning-niva-3-3918312"},
+  {title:"Dans och rörelse 60+ fortsättning 2",cn:"舞蹈与运动60+ 中级2",times:"12 gånger",start:"2026-09-01",time:"10.45-12.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1365:-",slug:"dans-dans-och-rorelse-60-fortsattning-2-3918321"},
+  {title:"Klassisk gitarr",cn:"古典吉他",times:"12 gånger",start:"2026-09-01",time:"18.15-19.45",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"2090:-",slug:"musik-klassisk-gitarr-3918378"},
+  {title:"Engelska fri konversation - digital kurs",cn:"英语自由对话 - 在线课程",times:"12 gånger",start:"2026-09-01",time:"18.00-19.30",place:"Digital verksamhet",free:false,price:"650:-",slug:"sprak-digital-engelska-fri-konversation-3918380"},
+  {title:"Sömnad - varannan vecka",cn:"缝纫 - 每隔一周",times:"8 gånger",start:"2026-09-01",time:"17.00-19.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1835:-",slug:"hantverk-somnad-varannan-vecka-3918593"},
+  {title:"Stickning + virkning varannan tisdag",cn:"编织与钩针 - 每隔周二",times:"8 gånger",start:"2026-09-01",time:"18.00-20.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1820:-",slug:"hantverk-stickning-och-virkning-varannan-tisdag-3919212"},
+  {title:"Dagateljé - Akvarell",cn:"日间画室 - 水彩",times:"12 gånger",start:"2026-09-01",time:"10.00-14.45",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"3710:-",slug:"konst-gr01-dagatelje-akvarell-i-3922298"},
+  {title:"Dagateljé - Måleri och teckning på distans",cn:"日间画室 - 在线绘画与素描",times:"12 gånger",start:"2026-09-01",time:"10.00-14.45",place:"Digital verksamhet",free:false,price:"1700:-",slug:"konst-gr09-dagatelje-digital-maleri-och-teckning-3922353"},
+  {title:"Dagateljé - Teckning och måleri",cn:"日间画室 - 素描与绘画",times:"15 gånger",start:"2026-09-01",time:"10.00-14.45",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"4280:-",slug:"konst-gr10-dagatelje-teckning-och-maleri-3922357"},
+  {title:"Teckning och akvarell",cn:"素描与水彩",times:"12 gånger",start:"2026-09-01",time:"15.30-17.45",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"2925:-",slug:"konst-gr15-teckning-och-akvarell-3922374"},
+  {title:"Måleri och teckning",cn:"绘画与素描",times:"12 gånger",start:"2026-09-01",time:"18.00-20.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"2925:-",slug:"konst-gr17-maleri-och-teckning-3922376"},
+  {title:"Ukulele nybörjare",cn:"尤克里里初学者",times:"8 gånger",start:"2026-09-01",time:"17.00-18.30",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1235:-",slug:"musik-ukulele-nyborjare-3923077"},
+  {title:"Ukulele nybörjare",cn:"尤克里里初学者(2)",times:"8 gånger",start:"2026-09-01",time:"19.00-20.30",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1235:-",slug:"musik-ukulele-nyborjare-3923079"},
+  {title:"Sashiko-sömnad",cn:"刺子绣",times:"4 gånger",start:"2026-09-01",time:"17.45-20.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"750:-",slug:"hantverk-somnad-sashiko-3923768"},
+  {title:"Keramik - tisdag 13.00",cn:"陶瓷课 - 周二 13:00",times:"12 gånger",start:"2026-09-01",time:"13.00-16.00",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-gr11-3925212"},
+  {title:"Keramik - tisdag 18.00",cn:"陶瓷课 - 周二 18:00",times:"12 gånger",start:"2026-09-01",time:"18.00-21.00",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-gr14-3926885"},
+  {title:"Keramik - tisdag 09.00",cn:"陶瓷课 - 周二 09:00",times:"12 gånger",start:"2026-09-01",time:"09.00-12.00",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-gr19-3926951"},
+  {title:"Akrylmåleri",cn:"丙烯绘画",times:"12 gånger",start:"2026-09-01",time:"18.00-21.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"3570:-",slug:"konst-gr05-vattenbaserat-oljemaleri-3928135"},
+  {title:"Oljemålning - avancerad",cn:"油画 - 进阶",times:"12 gånger",start:"2026-09-01",time:"17.30-19.45",place:"ABF Partille, Gamla Kronvägen 56 Partille",free:false,price:"3049:-",slug:"oljemalning-tisdag-avancerad-3929761"},
+  {title:"Hållbarhetsverkstan - Spara på maten",cn:"可持续工作坊 - 节约食物",times:"4 gånger",start:"2026-09-01",time:"14.00-16.15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-spara-pa-maten-3932099"},
+  {title:"Dans och rörelse 60+ nybörjare",cn:"舞蹈与运动60+ 初学者",times:"12 gånger",start:"2026-09-02",time:"09.00-10.30",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1365:-",slug:"dans-dans-och-rorelse-60-nyborjare-3918164"},
+  {title:"Dans och rörelse 60+ fortsättning 3",cn:"舞蹈与运动60+ 中级3",times:"12 gånger",start:"2026-09-02",time:"10.45-12.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1365:-",slug:"dans-dans-och-rorelse-60-fortsattning-3-3918220"},
+  {title:"Låtspel på gehör - fortsättning",cn:"听曲演奏 - 中级",times:"8 gånger",start:"2026-09-02",time:"19.15-21.30",place:"AFIG, Järntorget 7 Göteborg",free:false,price:"1930:-",slug:"musik-latspel-pa-gehor-fortsatting-3918229"},
+  {title:"Saxofon nivå 2",cn:"萨克斯风二级",times:"12 gånger",start:"2026-09-02",time:"19.15-20.45",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1835:-",slug:"musik-saxofon-niva-2-fd-nyborjare-3918299"},
+  {title:"Saxofon nivå 4",cn:"萨克斯风四级",times:"12 gånger",start:"2026-09-02",time:"17.30-19.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1835:-",slug:"musik-saxofon-fortsattning-niva-4-3918305"},
+  {title:"Linedance fortsättning",cn:"队列舞中级",times:"10 gånger",start:"2026-09-02",time:"17.40-18.40",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1210:-",slug:"dans-linedance-fortsattning-2-3918365"},
+  {title:"Linedance fortsättning",cn:"队列舞中级(2)",times:"10 gånger",start:"2026-09-02",time:"18.50-19.50",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1210:-",slug:"dans-linedance-fortsattning-1-3918367"},
+  {title:"Engelska avancerad - digital kurs",cn:"英语高级 - 在线课程",times:"12 gånger",start:"2026-09-02",time:"18.00-19.30",place:"Digital verksamhet",free:false,price:"650:-",slug:"sprak-digital-engelska-avancerad-3918379"},
+  {title:"Linedance - alla nivåer",cn:"",times:"10 gånger",start:"2026-09-02",time:"16.15-17.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1210:-",slug:"dans-linedance-alla-nivaer-3918576"},
+  {title:"Sömnad - onsdag 13.45",cn:"",times:"15 gånger",start:"2026-09-02",time:"13.45-16.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"3475:-",slug:"hantverk-somnad-3919170"},
+  {title:"Sömnad - onsdag 16.30",cn:"",times:"12 gånger",start:"2026-09-02",time:"16.30-18.45",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"2785:-",slug:"hantverk-somnad-3919174"},
+  {title:"Låtspel på gehör",cn:"",times:"8 gånger",start:"2026-09-02",time:"17.00-19.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1930:-",slug:"musik-latspel-pa-gehor-3922071"},
+  {title:"Distanskurs i akrylmåleri",cn:"",times:"12 gånger",start:"2026-09-02",time:"09.00-12.00",place:"Digital verksamhet",free:false,price:"1590:-",slug:"konst-gr06-akryl-digital-3922319"},
+  {title:"Mästarnas måleritekniker",cn:"",times:"12 gånger",start:"2026-09-02",time:"18.00-21.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"3570:-",slug:"konst-gr20-mastarnas-maleritekniker-3922388"},
+  {title:"Dagateljé - Akvarell",cn:"",times:"15 gånger",start:"2026-09-02",time:"10.00-14.45",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"4330:-",slug:"konst-gr21-dagatelje-akvarell-3922394"},
+  {title:"Keramik-onsdag 18.30",cn:"",times:"12 gånger",start:"2026-09-02",time:"18.30-21.30",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-gr02-3925183"},
+  {title:"Keramik för nybörjare",cn:"",times:"12 gånger",start:"2026-09-02",time:"16.00-18.15",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3120:-",slug:"keramik-gr12-for-nyborjare-3925213"},
+  {title:"Keramik - onsdag 09.00",cn:"",times:"12 gånger",start:"2026-09-02",time:"09.00-12.00",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-gr22-3926963"},
+  {title:"Keramik - onsdag 13.00",cn:"",times:"12 gånger",start:"2026-09-02",time:"13.00-15.15",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3120:-",slug:"keramik-gr23-3926968"},
+  {title:"Dagateljé - Akvarell och teckning",cn:"",times:"12 gånger",start:"2026-09-02",time:"10.00-14.45",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"3710:-",slug:"konst-gr14-dagatelje-teckning-och-akvarell-3927956"},
+  {title:"Oljemålning - avancerad",cn:"",times:"12 gånger",start:"2026-09-02",time:"16.45-19.45",place:"ABF Partille , Gamla Kronvägen 56 Partille",free:false,price:"3540:-",slug:"oljemalning-onsdag-avancerad-3929772"},
+  {title:"Måleri och teckning onsdagar - Målarskolan Mölndal",cn:"",times:"12 gånger",start:"2026-09-02",time:"18.30-20.45",place:"Mölndals Målarskola, Gamla Torget 41 Mölndal",free:false,price:"1640:-",slug:"malarskolan-maleri-och-teckning-onsdagar-3931419"},
+  {title:"Skapa med färgpennor - nybörjare och avancerad",cn:"",times:"10 gånger",start:"2026-09-02",time:"17.30-19.00",place:"ABF Partille , Gamla Kronvägen 56 Partille",free:false,price:"1133:-",slug:"konsten-att-skapa-med-fargpennor-nyborjare-och-avancerad-3932041"},
+  {title:"Hållbarhetsverkstan - Stickning",cn:"",times:"4 gånger",start:"2026-09-02",time:"14.00-16.15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-stickning-3933339"},
+  {title:"Hållbarhetsverkstan - Stickning",cn:"",times:"4 gånger",start:"2026-09-02",time:"18.00-20.15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-stickning-3933341"},
+  {title:"Spanska fortsättning termin 10",cn:"",times:"12 gånger",start:"2026-09-03",time:"11.00-12.30",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1930:-",slug:"sprak-spanska-fortsattning-termin-10-3917814"},
+  {title:"Folkmusikkören \"Lei-La\"",cn:"",times:"10 gånger",start:"2026-09-03",time:"17.45-20.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"2045:-",slug:"musik-folkmusikkoren-lei-la-3918293"},
+  {title:"Saxofon nivå 2",cn:"",times:"12 gånger",start:"2026-09-03",time:"17.30-19.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1835:-",slug:"musik-saxofon-niva-2-fd-nyborjare-3918307"},
+  {title:"Saxofon nybörjare",cn:"",times:"12 gånger",start:"2026-09-03",time:"19.15-20.45",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1835:-",slug:"musik-saxofon-nyborjare-3918317"},
+  {title:"Teaterspaning",cn:"",times:"10 gånger",start:"2026-09-03",time:"19.00-21.30",place:"Egen",free:false,price:"3050:-",slug:"samhalle-teaterspaning-3918364"},
+  {title:"Sömnad - torsdag 11.00",cn:"",times:"12 gånger",start:"2026-09-03",time:"11.00-14.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"3715:-",slug:"hantverk-somnad-3918585"},
+  {title:"Måla akvarell",cn:"",times:"12 gånger",start:"2026-09-03",time:"15.00-18.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"3570:-",slug:"konst-gr03-mala-akvarell-3922312"},
+  {title:"Akvarell torsdag",cn:"",times:"12 gånger",start:"2026-09-03",time:"09.45-12.45",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"3570:-",slug:"konst-gr11-akvarell-3922364"},
+  {title:"Akrylmåleri",cn:"",times:"12 gånger",start:"2026-09-03",time:"18.00-21.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"3570:-",slug:"konst-gr12-akryl-maleri-3922371"},
+  {title:"Teckning och måleri",cn:"",times:"12 gånger",start:"2026-09-03",time:"10.00-12.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"2925:-",slug:"konst-gr18-teckning-och-maleri-3922378"},
+  {title:"Kroki",cn:"",times:"6 gånger",start:"2026-09-03",time:"18.00-21.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"2490:-",slug:"konst-gr07-kroki-3922403"},
+  {title:"Keramik - torsdag 16.00",cn:"",times:"12 gånger",start:"2026-09-03",time:"16.00-18.15",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3120:-",slug:"keramik-gr05-3925202"},
+  {title:"Keramik - torsdag 09.00",cn:"",times:"12 gånger",start:"2026-09-03",time:"09.00-12.00",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-gr07-3925206"},
+  {title:"Keramik - torsdag 18.30",cn:"",times:"12 gånger",start:"2026-09-03",time:"18.30-21.30",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-gr08-3925208"},
+  {title:"Keramik - torsdag 13.00",cn:"",times:"12 gånger",start:"2026-09-03",time:"13.00-15.15",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3120:-",slug:"keramik-gr09-3925210"},
+  {title:"Oljemålning - avancerad",cn:"",times:"12 gånger",start:"2026-09-03",time:"16.45-19.45",place:"ABF Partille , Gamla Kronvägen 56 Partille",free:false,price:"3540:-",slug:"oljemalning-torsdag-avancerad-3929776"},
+  {title:"Måleri och teckning torsdag dagtid- Målarskolan Mölndal",cn:"",times:"8 gånger",start:"2026-09-03",time:"11.00-14.00",place:"Mölndals Målarskola, Gamla Torget 41 Mölndal",free:false,price:"1640:-",slug:"malarskolan-maleri-och-teckning-torsdag-dagtid-3931339"},
+  {title:"Måleri och teckning torsdagar - Målarskolan Mölndal",cn:"",times:"12 gånger",start:"2026-09-03",time:"19.00-21.15",place:"Mölndals Målarskola, Gamla Torget 41 Mölndal",free:false,price:"1640:-",slug:"malarskolan-maleri-och-teckning-torsdagar-3931427"},
+  {title:"Dagateljé - Akvarell",cn:"",times:"12 gånger",start:"2026-09-04",time:"10.00-14.45",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"3710:-",slug:"konst-gr02-dagatelje-akvarell-ii-3922310"},
+  {title:"Flödigt akvarellmåleri",cn:"",times:"12 gånger",start:"2026-09-04",time:"11.00-14.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"3570:-",slug:"konst-gr04-flodigt-akvarellmaleri-3922317"},
+  {title:"Sashiko-sömnad",cn:"",times:"4 gånger",start:"2026-09-04",time:"10.00-12.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"750:-",slug:"hantverk-somnad-sashiko-3923749"},
+  {title:"Keramik - fredag 09.30",cn:"",times:"12 gånger",start:"2026-09-04",time:"09.30-12.30",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3930:-",slug:"keramik-gr10-3925211"},
+  {title:"Helgkurs - Sömnad för nybörjare",cn:"",times:"2 gånger",start:"2026-09-05",time:"10.00-16.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1500:-",slug:"hantverk-helgkurs-somnad-for-nyborjare-3930944"},
+  {title:"Kreativ kurs i abstrakt måleri med akryl",cn:"",times:"8 gånger",start:"2026-09-05",time:"11.00-13.45",place:"ABF Partille , Gamla Kronvägen 56 Partille",free:false,price:"1371:-",slug:"kreativ-kurs-i-abstrakt-maleri-med-akryl-3935560"},
+  {title:"Sömnad - måndag 12.15",cn:"",times:"12 gånger",start:"2026-09-07",time:"12.15-14.30",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"2785:-",slug:"hantverk-somnad-3918578"},
+  {title:"Sömnad - måndag 15.00",cn:"",times:"12 gånger",start:"2026-09-07",time:"15.00-17.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"2785:-",slug:"hantverk-somnad-3918582"},
+  {title:"Dragspel nivå 1",cn:"",times:"12 gånger",start:"2026-09-07",time:"19.15-20.45",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"2120:-",slug:"musik-dragspel-fortsattning-niva-1-3919157"},
+  {title:"Dragspel fortsättning nivå 3",cn:"",times:"12 gånger",start:"2026-09-07",time:"17.30-19.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"2120:-",slug:"musik-dragspel-fortsattning-niva-3-3919160"},
+  {title:"Stickning + virkning varannan måndag",cn:"",times:"8 gånger",start:"2026-09-07",time:"18.00-20.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1820:-",slug:"hantverk-stickning-och-virkning-varannan-mandag-3919201"},
+  {title:"Fota med mobilen (enbart Android)",cn:"",times:"5 gånger",start:"2026-09-07",time:"18.00-20.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1200:-",slug:"samhalle-fota-med-mobilen-nyborjare-3919214"},
+  {title:"Virka rutor på Blå stället",cn:"",times:"7 gånger",start:"2026-09-07",time:"10.15-13.15",place:"Kulturhuset Blå Stället, Angereds torg 13 Angered",free:true,price:"",slug:"omg-1-ht-virka-rutor-bla-stallet-3930704"},
+  {title:"Keramik hos kulturföreningen Ögat",cn:"",times:"8 gånger",start:"2026-09-07",time:"17.00-20.00",place:"ÖGAT - Östra Göteborgs Alternativa Träffpunkt, Götaholmsgatan 22 Göteborg",free:false,price:"2775:-",slug:"keramik-ogat-3932588"},
+  {title:"Dragspel fortsättning nivå 5",cn:"",times:"12 gånger",start:"2026-09-08",time:"15.30-17.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"2120:-",slug:"musik-dragspel-fortsattning-niva-5-3919154"},
+  {title:"Dragspel fortsättning nivå 4",cn:"",times:"12 gånger",start:"2026-09-08",time:"17.30-19.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"2120:-",slug:"musik-dragspel-fortsattning-niva-4-3919162"},
+  {title:"Stickning + virkning varannan tisdag",cn:"",times:"8 gånger",start:"2026-09-08",time:"12.45-15.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1820:-",slug:"hantverk-stickning-och-virkning-varannan-tisdag-3919213"},
+  {title:"Ljudredigering för nybörjare - från analogt till digitalt ljud",cn:"",times:"10 gånger",start:"2026-09-08",time:"17.30-19.00",place:"ABF Partille , Gamla Kronvägen 56 Partille",free:false,price:"1329:-",slug:"redigering-av-digitalt-ljud-3932285"},
+  {title:"Dragspel fortsättning nivå 2",cn:"",times:"12 gånger",start:"2026-09-09",time:"17.30-19.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"2120:-",slug:"musik-dragspel-fortsattning-niva-2-3919161"},
+  {title:"Dragspelsensemble",cn:"",times:"12 gånger",start:"2026-09-09",time:"19.15-20.45",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"2120:-",slug:"musik-dragspelsensemble-3919163"},
+  {title:"Dragspel nybörjare",cn:"",times:"12 gånger",start:"2026-09-10",time:"18.30-20.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"2120:-",slug:"musik-dragspel-nyborjare-3929198"},
+  {title:"Engelska för vardagslivet - samtal och samhälle",cn:"",times:"10 gånger",start:"2026-09-10",time:"17.30-19.00",place:"ABF Partille , Gamla Kronvägen 56 Partille",free:false,price:"1342:-",slug:"engelska-for-vardagslivet-samtal-och-samhalle-3932017"},
+  {title:"Förnya dina textilier med enkla medel",cn:"",times:"8 gånger",start:"2026-09-11",time:"10.00-13.00",place:"Öckerö Bibliotek",free:true,price:"",slug:"fornya-dina-textilier-med-enkla-medel-3928921"},
+  {title:"Sömnad och laga! Blå stället",cn:"",times:"7 gånger",start:"2026-09-11",time:"10.15-13.15",place:"Kulturhuset Blå Stället, Angereds torg 13 Angered",free:true,price:"",slug:"omg-1-ht-somnad-laga-bla-stallet-3930707"},
+  {title:"Helgkurs - Akvarell 12-13 september",cn:"",times:"2 gånger",start:"2026-09-12",time:"10.00-16.00",place:"ABF Vågmästargården, Hisingsgatan 28 Göteborg",free:false,price:"1715:-",slug:"konst-helgkurs-2026-akvarell-pa-hisingen-3928146"},
+  {title:"Helgkurs - Silversmide 12-13 september",cn:"",times:"2 gånger",start:"2026-09-12",time:"10.00-16.00",place:"Sockerbruket 27, Silversmide, Sockerbruket 27 Göteborg",free:false,price:"2500:-",slug:"hantverk-silversmide-helgkurs-12-13-september-3931570"},
+  {title:"Sy-söndag",cn:"",times:"4 gånger",start:"2026-09-13",time:"10.00-16.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"3000:-",slug:"hantverk-sy-sondag-3919189"},
+  {title:"Minutfilm - hur man skapar en kortfilm med dator eller mobil - distans",cn:"",times:"5 gånger",start:"2026-09-15",time:"18.30-20.45",place:"Via Teams",free:false,price:"795:-",slug:"minutfilm-hur-man-skapar-en-kortfilm-med-dator-eller-mobil-3931622"},
+  {title:"Hållbarhetsverkstan - Ung impact",cn:"",times:"4 gånger",start:"2026-09-15",time:"17.30-19.45",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-ung-impact-3932100"},
+  {title:"Målning med Synskadades Riksförbund",cn:"",times:"12 gånger",start:"2026-09-16",time:"10.30-13.30",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"350:-",slug:"malning-srf-onsdag-1030-3924726"},
+  {title:"Workshop - Sashiko på Sjöfartsmuséet",cn:"",times:"1 gånger",start:"2026-09-16",time:"17.30-19.30",place:"Sjöfartsmuseét Akvariet, Karl Johansgatan 1-3 Göteborg",free:true,price:"",slug:"hantverk-utforska-sashiko-3933039"},
+  {title:"Helgkurs - Fri form i keramik 19-20 september",cn:"",times:"3 gånger",start:"2026-09-19",time:"10.00-16.00",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"2760:-",slug:"keramik-helgkurs-2026-v38-fri-form-19-20-september-3929506"},
+  {title:"Målerikurs för föräldrar och barn 7-12 år",cn:"",times:"6 gånger",start:"2026-09-19",time:"10.00-12.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1080:-",slug:"konst-gr22-foraldrar-och-barn-malerikurs-i-akryl-3932766"},
+  {title:"Teckning 13-17 år",cn:"",times:"6 gånger",start:"2026-09-19",time:"13.00-15.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1080:-",slug:"konst-gr23-maleri-for-unga-3933113"},
+  {title:"Sy-söndag",cn:"",times:"4 gånger",start:"2026-09-20",time:"10.00-16.00",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"3000:-",slug:"hantverk-sy-sondag-3929638"},
+  {title:"Mobilen i vardagen - nybörjare 60+",cn:"",times:"5 gånger",start:"2026-09-21",time:"10.00-11.30",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"500:-",slug:"samhalle-data-mobilen-i-vardagen-nyborjare-60-3930485"},
+  {title:"Mobilens möjligheter 60+",cn:"",times:"5 gånger",start:"2026-09-21",time:"12.45-14.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"500:-",slug:"samhalle-data-mobilens-mojligheter-60-3930490"},
+  {title:"Abstrakt konst i akvarell och akryl",cn:"",times:"5 gånger",start:"2026-09-21",time:"13.30-15.45",place:"Folkets Hus Nol, Ale, Noltorget 10 Nol",free:false,price:"1590:-",slug:"abstrakt-konst-i-akvarell-och-akryl-karin-nyberg-3935600"},
+  {title:"Abstrakt konst i akvarell och akryl",cn:"",times:"5 gånger",start:"2026-09-21",time:"18.15-20.30",place:"Folkets Hus Nol, Ale, Noltorget 10 Nol",free:false,price:"1590:-",slug:"abstrakt-konst-i-akvarell-och-akryl-karin-nyberg-3935613"},
+  {title:"Akustisk gitarr för nybörjare - Orust",cn:"",times:"10 gånger",start:"2026-09-22",time:"17.00-18.30",place:"ABF Orust, Skansvägen 4 B Svanesund",free:false,price:"1350:-",slug:"gitarr-grupp-1-orust-3911743"},
+  {title:"Akustisk gitarr för nybörjare - Orust",cn:"",times:"10 gånger",start:"2026-09-22",time:"18.45-20.15",place:"ABF Orust, Skansvägen 4 B Svanesund",free:false,price:"1350:-",slug:"gitarr-grupp-2-orust-3911803"},
+  {title:"Sömnad - varannan tisdag",cn:"",times:"5 gånger",start:"2026-09-22",time:"17.00-19.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1200:-",slug:"hantverk-somnad-3918589"},
+  {title:"Engelska för nybörjare",cn:"",times:"5 gånger",start:"2026-09-22",time:"18.00-20.15",place:"Folkets Hus Nol, Ale, Noltorget 10 Nol",free:false,price:"1110:-",slug:"engelska-for-nyborjare-ale-3932742"},
+  {title:"Släktforskning för nybörjare",cn:"",times:"5 gånger",start:"2026-09-22",time:"18.00-20.15",place:"Villa Pomona, Pomonavägen 10 Lerum",free:false,price:"1110:-",slug:"slaktforskning-for-nyborjare-lerum-3933080"},
+  {title:"Gitarr för nybörjare",cn:"",times:"5 gånger",start:"2026-09-22",time:"18.15-20.30",place:"Folkets Hus Nol, Ale, Noltorget 10 Nol",free:false,price:"1390:-",slug:"gitarr-for-nyborjare-3935786"},
+  {title:"Akvarell- och naturkurs - Höstlandskap och fåglar",cn:"",times:"10 gånger",start:"2026-09-23",time:"18.00-20.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1100:-",slug:"akvarell-och-naturkurs-hostlandskap-och-faglar-3931629"},
+  {title:"Måla med akryl för nybörjare - Lerum",cn:"",times:"8 gånger",start:"2026-09-23",time:"18.00-21.00",place:"Villa Pomona, Pomonavägen 10 Lerum",free:false,price:"3160:-",slug:"mala-med-akryl-for-nyborjare-lerum-3933077"},
+  {title:"Spanska för nybörjare",cn:"",times:"5 gånger",start:"2026-09-23",time:"18.00-20.15",place:"Folkets Hus Nol, Ale, Noltorget 10 Nol",free:false,price:"1110:-",slug:"spanska-for-nyborjare-ale-3935771"},
+  {title:"Prova på - Bildvävning",cn:"",times:"1 gånger",start:"2026-09-24",time:"18.30-20.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:true,price:"",slug:"prova-pa-bildvavning-3934104"},
+  {title:"Abstrakt måleri i olja",cn:"",times:"5 gånger",start:"2026-09-24",time:"18.15-20.30",place:"Folkets Hus Nol, Ale, Noltorget 10 Nol",free:false,price:"1590:-",slug:"abstrakt-maleri-i-olja-3935654"},
+  {title:"Abstrakt måleri i olja",cn:"",times:"5 gånger",start:"2026-09-24",time:"14.15-16.30",place:"Folkets Hus Nol, Ale, Noltorget 10 Nol",free:false,price:"1590:-",slug:"abstrakt-maleri-i-olja-3935755"},
+  {title:"Decoupage Unga Örnar",cn:"",times:"4 gånger",start:"2026-09-26",time:"13.30-16.00",place:"ABF Partille , Gamla Kronvägen 56 Partille",free:true,price:"",slug:"decoupage-3876339"},
+  {title:"Föräldrar & barn - Skapa tillsammans 26-27 september",cn:"",times:"3 gånger",start:"2026-09-26",time:"09.30-12.30",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"1030:-",slug:"keramik-helgkurs-2026-v39-foraldrar-barn-skapa-tillsammans-26-27-september-3935334"},
+  {title:"Hållbarhetsverkstan - Skapa med trasor och stuvar",cn:"",times:"4 gånger",start:"2026-09-28",time:"14.00-16.15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-skapa-med-trasor-och-stuvar-3933785"},
+  {title:"Hållbarhetsverkstan - Skapa med trasor och stuvar",cn:"",times:"4 gånger",start:"2026-09-28",time:"18.00-20.15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-skapa-med-trasor-och-stuvar-3933787"},
+  {title:"Fri konst för pensionärer",cn:"",times:"10 gånger",start:"2026-09-29",time:"10.15-12.00",place:"ABF Partille , Gamla Kronvägen 56 Partille",free:false,price:"1329:-",slug:"fri-konst-tisdagar-for-pensionarer-3929801"},
+  {title:"Hållbarhetsverkstan - Växtfärgning",cn:"",times:"4 gånger",start:"2026-09-30",time:"14.00-16.15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-vaxtfargning-3932101"},
+  {title:"Hållbarhetsverkstan - Växtfärgning",cn:"",times:"4 gånger",start:"2026-09-30",time:"18.00-20.15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-vaxtfargning-3932102"},
+  {title:"Workshop - Sashiko på Sjöfartsmuséet",cn:"",times:"1 gånger",start:"2026-09-30",time:"17.30-19.30",place:"Sjöfartsmuseét Akvariet, Karl Johansgatan 1-3 Göteborg",free:true,price:"",slug:"hantverk-utforska-sashiko-3933042"},
+  {title:"Workshop - Makramé på Sjöfartsmuseet",cn:"",times:"1 gånger",start:"2026-10-01",time:"15.30-17.30",place:"Sjöfartsmuseét Akvariet, Karl Johansgatan 1-3 Göteborg",free:true,price:"",slug:"hantverk-makrame-workshop-3933051"},
+  {title:"Helgkurs - Drejning 2-4 oktober",cn:"",times:"4 gånger",start:"2026-10-02",time:"18.00-21.00",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3120:-",slug:"keramik-helgkurs-2026-v40-drejning-2-4-okt-3929130"},
+  {title:"AI i vardagen",cn:"",times:"5 gånger",start:"2026-10-06",time:"13.00-14.30",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"500:-",slug:"samhalle-data-ai-i-vardagen-3930789"},
+  {title:"Skrivarcirkel - kom igång att skriva, alla har något att berätta!",cn:"",times:"8 gånger",start:"2026-10-15",time:"18.00-20.00",place:"Humlan, Tjörn, Wackenfeldts väg 4 Kållekärr",free:true,price:"",slug:"skrivarcirkel-kom-igang-att-skriva-alla-har-nagot-att-beratta-3927017"},
+  {title:"Helgkurs - Drejning 16-18 oktober",cn:"",times:"4 gånger",start:"2026-10-16",time:"18.00-21.00",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3120:-",slug:"keramik-helgkurs-2026-v42-drejning-16-18-okt-3929132"},
+  {title:"Helgkurs - Silversmide 17-18 oktober",cn:"",times:"2 gånger",start:"2026-10-17",time:"10.00-16.00",place:"Sockerbruket 27, Silversmide, Sockerbruket 27 Göteborg",free:false,price:"2500:-",slug:"hantverk-silversmide-helgkurs-17-18-oktober-3931571"},
+  {title:"Helgkurs - Drejning 23-25 oktober",cn:"",times:"4 gånger",start:"2026-10-23",time:"18.00-21.00",place:"ABF Södra Allégatan 1B, Södra Allégatan 1B Göteborg",free:false,price:"3120:-",slug:"keramik-helgkurs-2026-v43-drejning-23-25-okt-3926986"},
+  {title:"Helgkurs - Experimentell akryl 24-25 oktober",cn:"",times:"2 gånger",start:"2026-10-24",time:"10.00-15.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1600:-",slug:"konst-helgkurs-2026-experimentell-akryl-v43-24-25-oktober-3932759"},
+  {title:"Fota och filma med mobilen (Android) - fortsättning",cn:"",times:"6 gånger",start:"2026-10-26",time:"18.00-20.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"1480:-",slug:"samhalle-fota-och-filma-med-mobilen-fortsattning-3919215"},
+  {title:"Hållbarhetsverkstan - Remake av kläder",cn:"",times:"4 gånger",start:"2026-10-28",time:"18.00-20.15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-remake-av-klader-3932106"},
+  {title:"Hållbarhetsverkstan - Remake av kläder",cn:"",times:"4 gånger",start:"2026-10-28",time:"14.00-16.15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-remake-av-klader-3932107"},
+  {title:"Keramik hos kulturföreningen Ögat",cn:"",times:"8 gånger",start:"2026-11-02",time:"17.00-20.00",place:"ÖGAT - Östra Göteborgs Alternativa Träffpunkt, Götaholmsgatan 22 Göteborg",free:false,price:"2775:-",slug:"keramik-ogat-3932609"},
+  {title:"Abstrakt konst i akvarell och akryl",cn:"",times:"5 gånger",start:"2026-11-02",time:"18.15-20.30",place:"Folkets Hus Nol, Ale, Noltorget 10 Nol",free:false,price:"1590:-",slug:"abstrakt-konst-i-akvarell-och-akryl-karin-nyberg-3935635"},
+  {title:"Abstrakt konst i akvarell och akryl",cn:"",times:"5 gånger",start:"2026-11-02",time:"13.30-15.45",place:"Folkets Hus Nol, Ale, Noltorget 10 Nol",free:false,price:"1590:-",slug:"abstrakt-konst-i-akvarell-och-akryl-karin-nyberg-3935650"},
+  {title:"Engelska för nybörjare",cn:"",times:"5 gånger",start:"2026-11-03",time:"18.00-20.15",place:"Folkets Hus Nol, Ale, Noltorget 10 Nol",free:false,price:"1110:-",slug:"engelska-for-nyborjare-ale-3932753"},
+  {title:"Släktforskning för nybörjare",cn:"",times:"5 gånger",start:"2026-11-03",time:"18.00-20.15",place:"Villa Pomona, Pomonavägen 10 Lerum",free:false,price:"1110:-",slug:"slaktforskning-for-nyborjare-lerum-3933084"},
+  {title:"Släktforskning för nybörjare",cn:"",times:"5 gånger",start:"2026-11-04",time:"18.00-20.15",place:"Folkets Hus Nol, Ale, Noltorget 10 Nol",free:true,price:"",slug:"slaktforskning-for-nyborjare-ale-3932763"},
+  {title:"Workshop - Sashiko på Sjöfartsmuséet",cn:"",times:"1 gånger",start:"2026-11-04",time:"17.30-19.30",place:"Sjöfartsmuseét Akvariet, Karl Johansgatan 1-3 Göteborg",free:true,price:"",slug:"hantverk-utforska-sashiko-3933043"},
+  {title:"Workshop - Sashiko på Sjöfartsmuséet",cn:"",times:"1 gånger",start:"2026-11-05",time:"14.00-16.00",place:"Sjöfartsmuseét Akvariet, Karl Johansgatan 1-3 Göteborg",free:true,price:"",slug:"hantverk-utforska-sashiko-3933044"},
+  {title:"Abstrakt måleri i olja",cn:"",times:"5 gånger",start:"2026-11-05",time:"18.15-20.30",place:"Folkets Hus Nol, Ale, Noltorget 10 Nol",free:false,price:"1590:-",slug:"abstrakt-maleri-i-olja-3935752"},
+  {title:"Abstrakt måleri i olja",cn:"",times:"5 gånger",start:"2026-11-05",time:"14.15-16.30",place:"Folkets Hus Nol, Ale, Noltorget 10 Nol",free:false,price:"1590:-",slug:"abstrakt-maleri-i-olja-3935756"},
+  {title:"Workshop - Sashiko på Sjöfartsmuséet",cn:"",times:"1 gånger",start:"2026-11-12",time:"14.00-16.00",place:"Sjöfartsmuseét Akvariet, Karl Johansgatan 1-3 Göteborg",free:true,price:"",slug:"hantverk-utforska-sashiko-3933046"},
+  {title:"Workshop - Sashiko på Sjöfartsmuséet",cn:"",times:"1 gånger",start:"2026-11-19",time:"14.00-16.00",place:"Sjöfartsmuseét Akvariet, Karl Johansgatan 1-3 Göteborg",free:true,price:"",slug:"hantverk-utforska-sashiko-3933047"},
+  {title:"Helgkurs - Silversmide 21-22 november",cn:"",times:"2 gånger",start:"2026-11-21",time:"10.00-16.00",place:"Sockerbruket 27, Silversmide, Sockerbruket 27 Göteborg",free:false,price:"2500:-",slug:"hantverk-silversmide-helgkurs-21-22-november-3931574"},
+  {title:"Hållbarhetsverkstan - Fixa julen med återbruk",cn:"",times:"4 gånger",start:"2026-11-25",time:"18.00-20.15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-fixa-julen-med-aterbruk-3932109"},
+  {title:"Hållbarhetsverkstan - Fixa julen med återbruk",cn:"",times:"4 gånger",start:"2026-11-25",time:"14.00-16.15",place:"Hållbarhetsverkstan Kungälv, Hällebergsgatan 56 Ytterby",free:true,price:"",slug:"hallbarhetsverkstan-fixa-julen-med-aterbruk-3932110"},
+  {title:"Skapa din egen julkrans",cn:"",times:"1 gånger",start:"2026-12-14",time:"17.00-19.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"650:-",slug:"hantverk-skapa-din-egen-julkrans-3926491"},
+  {title:"Skapa din egen julkrans",cn:"",times:"1 gånger",start:"2026-12-15",time:"17.00-19.15",place:"ABF Järntorget 8, Järntorget 8 Göteborg",free:false,price:"650:-",slug:"hantverk-skapa-din-egen-julkrans-3918375"},
 ];
 
-const ABF_EVENTS_FALLBACK = [
-  {title:"Föreläsning om demokrati, val och politik i Sverige på lätt svenska",date:"2026-06-09",time:"10.00-11.00",place:"Göteborg",slug:"forelasning-med-john-harfouche-demokrati-val-och-politik-i-sverige-pa-latt-svenska-3929460"},
-  {title:"Föreläsning om demokrati, val och politik i Sverige på lätt svenska",date:"2026-06-11",time:"10.00-11.00",place:"Göteborg",slug:"forelasning-med-martin-wannholt-demokrati-val-och-politik-i-sverige-pa-latt-svenska-3929465"},
-  {title:"West Pride – Förbjuden kärlek i Sverige under 1900-talet",date:"2026-06-12",time:"13.00-14.00",place:"Göteborg",slug:"forelasning-forbjuden-karlek-i-sverige-under-1900-talet-med-mian-lodalen-del-av-west-pride-3922145"},
-  {title:"Konsert med Dominique",date:"2026-06-13",time:"19.00-20.00",place:"Göteborg",slug:"kulturkrock-konsert-med-dominique-3931467"},
-  {title:"Konsert med Totodaroto och Out of Control",date:"2026-07-03",time:"19.00-23.00",place:"Ellös",slug:"konsert-med-totodaroto-och-out-of-control-3922651"},
-  {title:"Konstutställning och kontsvandringar på Ellösparken",date:"2026-07-16",time:"10.00-17.00",place:"Ellös",slug:"konstutstallning-pa-ellosparken-3922664"},
-  {title:"Konstutställning på Ellösparken",date:"2026-07-19",time:"15.00-16.00",place:"Ellös",slug:"konstutstallning-med-carl-erasmie-agneta-olsdon-och-cecilia-zettersten-3922665"},
-  {title:"Konstutställning på Ellösparken",date:"2026-07-26",time:"14.00-15.00",place:"Ellös",slug:"konstutstallning-med-caroline-ballantyne-norneby-cornelia-cederleuf-camilla-hyllen-marie-hoglind-3922668"},
-  {title:"Konstutställning på Ellösparken",date:"2026-08-02",time:"14.00-15.00",place:"Ellös",slug:"konstutstallning-med-lars-aune-birgitta-lundh-gitse-och-susanne-nilsson-3922670"}
+// ========== ABF 活动缓存数据（含中文名称）==========
+const ABF_EVENTS = [
+  {title:"Föreläsning om demokrati, val och politik i Sverige på lätt svenska",cn:"民主、选举与瑞典政治讲座——简易瑞典语",date:"2026-06-11",time:"10.00-11.00",place:"Integrationsnätverk Göteborg, Vårvindsgatan 20",slug:"forelasning-med-martin-wannholt-demokrati-val-och-politik-i-sverige-pa-latt-svenska-3929465"},
+  {title:"West Pride – Förbjuden kärlek i Sverige under 1900-talet",cn:"West Pride – 20世纪瑞典被禁的爱",date:"2026-06-12",time:"13.00-14.00",place:"Verket, Lilla Stampgatan 1A Göteborg",slug:"forelasning-forbjuden-karlek-i-sverige-under-1900-talet-med-mian-lodalen-del-av-west-pride-3922145"},
+  {title:"Konsert med Dominique",cn:"多米尼克音乐会",date:"2026-06-13",time:"19.00-20.00",place:"Stenhuset, Djurgårdsgatan 29 Göteborg",slug:"kulturkrock-konsert-med-dominique-3931467"},
+  {title:"Konsert med Totodaroto och Out of Control",cn:"Totodaroto与Out of Control音乐会",date:"2026-07-03",time:"19.00-23.00",place:"Ellösparken Orust, Glimsåsvägen 11 Ellös",slug:"konsert-med-totodaroto-och-out-of-control-3922651"},
+  {title:"Konstutställning och kontsvandringar på Ellösparken",cn:"Ellös公园艺术展与艺术漫步",date:"2026-07-16",time:"10.00-17.00",place:"Ellösparken Orust, Glimsåsvägen 11 Ellös",slug:"konstutstallning-pa-ellosparken-3922664"},
+  {title:"Konstutställning på Ellösparken",cn:"Ellös公园艺术展",date:"2026-07-19",time:"15.00-18.00",place:"Ellösparken Orust, Glimsåsvägen 11 Ellös",slug:"konstutstallning-med-carl-erasmie-agneta-olsdon-och-cecilia-zettersten-3922665"},
+  {title:"Konstutställning på Ellösparken",cn:"Ellös公园艺术展(2)",date:"2026-07-26",time:"14.00-18.00",place:"Ellösparken Orust, Glimsåsvägen 11 Ellös",slug:"konstutstallning-med-caroline-ballantyne-norneby-cornelia-cederleuf-camilla-hyllen-marie-hoglind-3922668"},
+  {title:"Konstutställning och kontsvandringar på Ellösparken",cn:"Ellös公园艺术展与艺术漫步(2)",date:"2026-08-02",time:"14.00-15.00",place:"Ellösparken Orust, Glimsåsvägen 11 Ellös",slug:"konstutstallning-med-lars-aune-birgitta-lundh-gitse-och-susanne-nilsson-3922670"}
 ];
+
+// 中文名称查找表（用于实时获取数据时补充中文名）
+const ABF_CN_MAP = {};
+for (const c of ABF_KURSER) if (c.slug) ABF_CN_MAP[c.slug] = c.cn;
+for (const e of ABF_EVENTS) if (e.slug) ABF_CN_MAP[e.slug] = e.cn;
+
+// 给数据补充中文名称
+function addCnToAbfData(data) {
+  for (const item of data) {
+    if (!item.cn && item.slug && ABF_CN_MAP[item.slug]) {
+      item.cn = ABF_CN_MAP[item.slug];
+    }
+  }
+  return data;
+}
 
 let abfKurserEvents = [];
+let abfAllCourses = [];
+let abfPage = 1;
+let abfTotalPages = 1;
+let abfHasMore = false;
+let abfIsCourse = true;
 let isFetchingAbf = false;
 
 // Parse CourseCard HTML blocks into event objects
@@ -2152,54 +2350,72 @@ async function fetchAbfKurser() {
   const pt = document.getElementById('abfProgressText'); const pd = document.getElementById('abfProgressDetail');
   pc.classList.add('show'); pf.style.width = '0%'; pt.textContent = '正在连接 abf.se ...';
   abfKurserEvents = [];
+  abfAllCourses = [];
+  abfPage = 1;
+  abfTotalPages = 1;
+  document.getElementById('abfLoadMoreBtn')?.remove();
   
   try {
     const workerUrl = 'https://plain-meadow-437c.dishkun2012.workers.dev/api/abf';
-    // First request to get total count and page 1
-    let page = 1;
-    let allCourses = [];
-    let totalPages = 1;
+    const BATCH_SIZE = 5;
     
-    while (page <= totalPages && page <= 20) {
-      const resp = await fetch(workerUrl + '?type=course&page=' + page);
-      if (!resp.ok) throw new Error('Worker unavailable');
-      const html = await resp.text();
-      
-      // Extract total pages from pagination
-      if (page === 1) {
-        const pageLinks = [...html.matchAll(/page=(\d+)/g)];
-        const pages = pageLinks.map(m => parseInt(m[1]));
-        if (pages.length > 0) totalPages = Math.max(...pages);
-      }
-      
-      const courses = parseAbfCourseCards(html);
-      allCourses = allCourses.concat(courses);
-      
-      pf.style.width = Math.min(100, Math.round((page / totalPages) * 100)) + '%';
-      pt.textContent = '已获取第 ' + page + '/' + totalPages + ' 页';
-      pd.textContent = '已找到 ' + allCourses.length + ' 个课程';
-      
-      if (courses.length === 0) break;
-      page++;
+    // Get first page to determine total pages
+    const firstResp = await fetch(workerUrl + '?type=course&page=1');
+    if (!firstResp.ok) throw new Error('Worker unavailable');
+    const firstHtml = await firstResp.text();
+    const pageLinks = [...firstHtml.matchAll(/page=(\d+)/g)];
+    const pages = pageLinks.map(m => parseInt(m[1]));
+    abfTotalPages = pages.length > 0 ? Math.max(...pages) : 1;
+    
+    // Parse first page
+    let firstCourses = parseAbfCourseCards(firstHtml);
+    abfAllCourses = abfAllCourses.concat(firstCourses);
+    
+    pf.style.width = Math.min(100, Math.round((abfPage / abfTotalPages) * 100)) + '%';
+    pt.textContent = '第 1/' + abfTotalPages + ' 页，已找到 ' + abfAllCourses.length + ' 个课程';
+    pd.textContent = '正在获取...';
+    
+    // Fetch next BATCH_SIZE-1 pages
+    let batchEnd = Math.min(1 + BATCH_SIZE - 1, abfTotalPages);
+    for (let p = 2; p <= batchEnd; p++) {
       await sleep(80);
+      const resp = await fetch(workerUrl + '?type=course&page=' + p);
+      if (!resp.ok) break;
+      const html = await resp.text();
+      const courses = parseAbfCourseCards(html);
+      if (courses.length === 0) break;
+      abfAllCourses = abfAllCourses.concat(courses);
+      abfPage = p;
+      pf.style.width = Math.min(100, Math.round((p / abfTotalPages) * 100)) + '%';
+      pt.textContent = '第 ' + p + '/' + abfTotalPages + ' 页，已找到 ' + abfAllCourses.length + ' 个课程';
     }
     
-    abfKurserEvents = allCourses;
-    pf.style.width = '100%';
-    pt.textContent = '✅ 完成！共 ' + allCourses.length + ' 个课程（实时）';
+    abfKurserEvents = addCnToAbfData(abfAllCourses);
+    
+    if (abfPage < abfTotalPages) {
+      pt.textContent = '✅ 已加载 ' + abfKurserEvents.length + ' 个课程（前 ' + abfPage + '/' + abfTotalPages + ' 页）';
+      pd.textContent = '数据来自 abf.se/vast/kurs-sok';
+      abfHasMore = true;
+      abfIsCourse = true;
+    } else {
+      pf.style.width = '100%';
+      pt.textContent = '✅ 完成！共 ' + abfKurserEvents.length + ' 个课程（实时）';
+      pd.textContent = '数据来自 abf.se/vast/kurs-sok';
+      abfHasMore = false;
+    }
   } catch (e) {
     console.log('ABF Worker unavailable:', e.message);
     pt.textContent = '无法连接 abf.se，使用本地缓存...';
     abfKurserEvents = [];
-    for (let i = 0; i < ABF_KURSER_FALLBACK.length; i++) {
-      abfKurserEvents.push({...ABF_KURSER_FALLBACK[i], source: 'abf'});
-      pf.style.width = Math.round(((i+1)/ABF_KURSER_FALLBACK.length)*100) + '%';
-      pt.textContent = '已加载 ' + (i+1) + '/' + ABF_KURSER_FALLBACK.length + ' 个（缓存）';
+    for (let i = 0; i < ABF_KURSER.length; i++) {
+      abfKurserEvents.push({...ABF_KURSER[i], source: 'abf'});
+      pf.style.width = Math.round(((i+1)/ABF_KURSER.length)*100) + '%';
+      pt.textContent = '已加载 ' + (i+1) + '/' + ABF_KURSER.length + ' 个（缓存）';
       await sleep(40);
     }
-    pt.textContent = '✅ 完成！共 ' + ABF_KURSER_FALLBACK.length + ' 个课程（缓存）';
+    pt.textContent = '✅ 完成！共 ' + ABF_KURSER.length + ' 个课程（缓存）';
+    pd.textContent = '数据来自 abf.se/vast/kurs-sok';
   }
-  pd.textContent = '数据来自 abf.se/vast/kurs-sok';
   btn.disabled = false; btn.innerHTML = '📖 重新获取课程';
   if (otherBtn) otherBtn.disabled = false;
   isFetchingAbf = false;
@@ -2207,6 +2423,93 @@ async function fetchAbfKurser() {
   document.getElementById('abfEventsContainer').innerHTML = '<div class="empty-state"><div class="icon">🔄</div><p>正在加载，请稍……</p></div>';
   await enrichEvents(abfKurserEvents, {}, e => e.slug).catch(() => {});
   renderAbf('abfEventsContainer', abfKurserEvents);
+  if (abfHasMore) showAbfLoadMoreBtn();
+}
+
+function showAbfLoadMoreBtn() {
+  const oldBtn = document.getElementById('abfLoadMoreBtn');
+  if (oldBtn) oldBtn.remove();
+  const container = document.getElementById('abfEventsContainer');
+  const div = document.createElement('div');
+  div.id = 'abfLoadMoreBtn';
+  div.style.cssText = 'text-align:center;margin:1.5rem 0';
+  div.innerHTML = '<button class="btn btn-primary" onclick="loadMoreAbf()" style="background:#b0060e;padding:0.7rem 2rem;font-size:1rem">📥 加载更多（' + (abfTotalPages - abfPage) + ' 页剩余）</button>'
+    + '<div id="abfInlineProgress" style="display:none;margin-top:0.8rem">'
+    + '<div style="background:#333;border-radius:4px;height:8px;overflow:hidden;max-width:300px;margin:0 auto">'
+    + '<div id="abfInlineFill" style="background:#b0060e;height:100%;width:0%;transition:width 0.3s"></div></div>'
+    + '<div id="abfInlineText" style="color:#94a3b8;font-size:0.8rem;margin-top:0.3rem"></div></div>';
+  container.appendChild(div);
+}
+
+async function loadMoreAbf() {
+  if (isFetchingAbf) return; isFetchingAbf = true;
+  const workerUrl = 'https://plain-meadow-437c.dishkun2012.workers.dev/api/abf';
+  const BATCH_SIZE = 5;
+  const type = abfIsCourse ? 'course' : 'event';
+  
+  // Show inline progress at the loadMore button position
+  const inlineProg = document.getElementById('abfInlineProgress');
+  const inlineFill = document.getElementById('abfInlineFill');
+  const inlineText = document.getElementById('abfInlineText');
+  const loadMoreBtn = document.querySelector('#abfLoadMoreBtn button');
+  if (loadMoreBtn) loadMoreBtn.style.display = 'none';
+  if (inlineProg) inlineProg.style.display = 'block';
+  if (inlineText) inlineText.textContent = '正在获取...';
+  
+  // Also update the top progress bar
+  const pc = document.getElementById('abfProgressContainer');
+  const pf = document.getElementById('abfProgressFill');
+  const pt = document.getElementById('abfProgressText');
+  const pd = document.getElementById('abfProgressDetail');
+  pc.classList.add('show');
+  
+  try {
+    let endPage = Math.min(abfPage + BATCH_SIZE, abfTotalPages);
+    for (let p = abfPage + 1; p <= endPage; p++) {
+      await sleep(80);
+      const resp = await fetch(workerUrl + '?type=' + type + '&page=' + p);
+      if (!resp.ok) break;
+      const html = await resp.text();
+      const courses = type === 'course' ? parseAbfCourseCards(html) : parseAbfEventCards(html);
+      if (courses.length === 0) break;
+      
+      for (const c of courses) {
+        const slug = c.slug;
+        if (!abfAllCourses.some(e => e.slug === slug)) {
+          abfAllCourses.push(c);
+        }
+      }
+      abfPage = p;
+      const pct = Math.round((p / abfTotalPages) * 100);
+      pf.style.width = Math.min(100, pct) + '%';
+      pt.textContent = '第 ' + p + '/' + abfTotalPages + ' 页，共 ' + abfAllCourses.length + ' 个课程';
+      if (inlineFill) inlineFill.style.width = Math.min(100, pct) + '%';
+      if (inlineText) inlineText.textContent = '第 ' + p + '/' + abfTotalPages + ' 页 · ' + abfAllCourses.length + ' 个课程';
+    }
+    
+    abfKurserEvents = addCnToAbfData([...abfAllCourses]);
+    abfHasMore = abfPage < abfTotalPages;
+    
+    document.getElementById('abfLoadMoreBtn')?.remove();
+    
+    if (abfHasMore) {
+      pt.textContent = '✅ 已加载 ' + abfKurserEvents.length + ' 个课程（前 ' + abfPage + '/' + abfTotalPages + ' 页）';
+      pd.textContent = '数据来自 abf.se/vast/kurs-sok';
+    } else {
+      pf.style.width = '100%';
+      pt.textContent = '✅ 完成！共 ' + abfKurserEvents.length + ' 个课程（实时）';
+      pd.textContent = '数据来自 abf.se/vast/kurs-sok';
+    }
+  } catch (e) {
+    console.log('ABF loadMore error:', e.message);
+    pt.textContent = '获取更多时出错，请重试';
+    if (inlineText) inlineText.textContent = '❌ 获取失败，请重试';
+  }
+  isFetchingAbf = false;
+  
+  await enrichEvents(abfKurserEvents, {}, e => e.slug).catch(() => {});
+  renderAbf('abfEventsContainer', abfKurserEvents);
+  if (abfHasMore) showAbfLoadMoreBtn();
 }
 
 async function fetchAbfEvent() {
@@ -2226,7 +2529,7 @@ async function fetchAbfEvent() {
     if (!resp.ok) throw new Error('Worker unavailable');
     const html = await resp.text();
     
-    const events = parseAbfEventCards(html);
+    const events = addCnToAbfData(parseAbfEventCards(html));
     abfKurserEvents = events;
     
     pf.style.width = '100%';
@@ -2235,13 +2538,13 @@ async function fetchAbfEvent() {
     console.log('ABF Worker unavailable:', e.message);
     pt.textContent = '无法连接 abf.se，使用本地缓存...';
     abfKurserEvents = [];
-    for (let i = 0; i < ABF_EVENTS_FALLBACK.length; i++) {
-      abfKurserEvents.push({...ABF_EVENTS_FALLBACK[i], source: 'abf'});
-      pf.style.width = Math.round(((i+1)/ABF_EVENTS_FALLBACK.length)*100) + '%';
-      pt.textContent = '已加载 ' + (i+1) + '/' + ABF_EVENTS_FALLBACK.length + ' 个（缓存）';
+    for (let i = 0; i < ABF_EVENTS.length; i++) {
+      abfKurserEvents.push({...ABF_EVENTS[i], source: 'abf'});
+      pf.style.width = Math.round(((i+1)/ABF_EVENTS.length)*100) + '%';
+      pt.textContent = '已加载 ' + (i+1) + '/' + ABF_EVENTS.length + ' 个（缓存）';
       await sleep(40);
     }
-    pt.textContent = '✅ 完成！共 ' + ABF_EVENTS_FALLBACK.length + ' 个活动（缓存）';
+    pt.textContent = '✅ 完成！共 ' + ABF_EVENTS.length + ' 个活动（缓存）';
   }
   pd.textContent = '数据来自 abf.se/vast/kurs-sok';
   btn.disabled = false; btn.innerHTML = '🎭 重新获取活动';
@@ -2346,8 +2649,8 @@ function lookupAndStore(key) {
   if (typeof EVENT_DATA !== 'undefined') { found = EVENT_DATA.find(e => e.slug === key); if (found) source = 'goteborg'; }
   if (!found && typeof GBG_SAMPLE !== 'undefined') { found = GBG_SAMPLE.find(e => e.aid === key); if (found) source = 'gbg'; }
   if (!found && typeof KOMPIS_DATA !== 'undefined') { found = KOMPIS_DATA.find(e => e.slug === key); if (found) source = 'kompis'; }
-  if (!found && typeof ABF_KURSER_FALLBACK !== 'undefined') { found = ABF_KURSER_FALLBACK.find(e => e.slug === key); if (found) source = 'abf'; }
-  if (!found && typeof ABF_EVENTS_FALLBACK !== 'undefined') { found = ABF_EVENTS_FALLBACK.find(e => e.slug === key); if (found) source = 'abf'; }
+  if (!found && typeof ABF_KURSER !== 'undefined') { found = ABF_KURSER.find(e => e.slug === key); if (found) source = 'abf'; }
+  if (!found && typeof ABF_EVENTS !== 'undefined') { found = ABF_EVENTS.find(e => e.slug === key); if (found) source = 'abf'; }
   if (!found) return;
   
   let lnk = '#';
