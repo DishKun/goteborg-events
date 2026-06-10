@@ -596,24 +596,19 @@ async function fetchEvents() {
   allEvents = [];
   
   try {
-    // Try live API
+    // Try live API with server-side date filtering
     progressText.textContent = '正在连接 goteborg.com API...';
-    const infoResp = await fetch(
-      `https://api.goteborg.com/v1/events?lang=en&per_page=12&page=1&order_by=eventdate`
-    );
+    const apiBase = `https://api.goteborg.com/v1/events?lang=en&per_page=12&order_by=eventdate&start=${startDate}&end=${endDate}`;
+    const infoResp = await fetch(apiBase + '&page=1');
     if (!infoResp.ok) throw new Error('API unavailable');
     
     const infoData = await infoResp.json();
-    const totalPages = infoData.paging?.pages || 29;
-    const targetStart = new Date(startDate);
-    const targetEnd = new Date(endDate);
+    const totalPages = infoData.paging?.pages || 1;
     
     progressText.textContent = `共 ${totalPages} 页，正在获取...`;
     
     for (let page = 1; page <= totalPages; page++) {
-      const resp = await fetch(
-        `https://api.goteborg.com/v1/events?lang=en&per_page=12&page=${page}&order_by=eventdate`
-      );
+      const resp = await fetch(apiBase + '&page=' + page);
       if (!resp.ok) break;
       const data = await resp.json();
       const events = data.events || [];
@@ -621,12 +616,11 @@ async function fetchEvents() {
       for (const e of events) {
         const info = e.information || {};
         const dates = info.dates || [];
-        let bestDate = null, bestTime = '';
-        
+        // API 已过滤，取第一个匹配的日期条目
+        let bestDate = startDate, bestTime = '';
         for (const d of dates) {
           const s = (d.start || '').slice(0, 10);
-          const ed = (d.end || d.start || '').slice(0, 10);
-          if (s && s >= startDate && s <= endDate) {
+          if (s >= startDate && s <= endDate) {
             bestDate = s;
             const st = d.start?.slice(11, 16) || '';
             const et = d.end?.slice(11, 16) || '';
@@ -635,7 +629,14 @@ async function fetchEvents() {
             break;
           }
         }
-        if (!bestDate) continue;
+        // 若未找到精确匹配，使用第一个条目
+        if (!bestTime && dates[0]) {
+          const d0 = dates[0];
+          const st = d0.start?.slice(11, 16) || '';
+          const et = d0.end?.slice(11, 16) || '';
+          if (st && et && et !== '00:00') bestTime = st + '-' + et;
+          else if (st && st !== '00:00') bestTime = st;
+        }
         
         const title = (e.title?.rendered || '').replace(/&#8211;/g,'–').replace(/&amp;/g,'&');
         const slug = e.slug || '';
@@ -850,23 +851,18 @@ function loadMore(containerId) {
 }
 // Set dynamic date defaults
 function setDateDefaults() {
+  const elStart = document.getElementById('m1StartDate');
+  const elEnd = document.getElementById('m1EndDate');
+  const elGbg = document.getElementById('gbgDate');
+  if (!elStart || !elEnd || !elGbg) { setTimeout(setDateDefaults, 100); return; }
   const today = new Date();
-  const todayStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
-  const week = new Date(today); week.setDate(week.getDate()+7);
+  const y = today.getFullYear(), m = today.getMonth()+1, d = today.getDate();
+  const todayStr = y + '-' + String(m).padStart(2,'0') + '-' + String(d).padStart(2,'0');
+  const week = new Date(today); week.setDate(d+7);
   const weekStr = week.getFullYear() + '-' + String(week.getMonth()+1).padStart(2,'0') + '-' + String(week.getDate()).padStart(2,'0');
-  document.getElementById('m1StartDate').value = todayStr;
-  document.getElementById('m1EndDate').value = weekStr;
-  document.getElementById('gbgDate').value = todayStr;
-}
-setDateDefaults();
-function setDateDefaults() {
-  const today = new Date();
-  const todayStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
-  const week = new Date(today); week.setDate(week.getDate()+7);
-  const weekStr = week.getFullYear() + '-' + String(week.getMonth()+1).padStart(2,'0') + '-' + String(week.getDate()).padStart(2,'0');
-  document.getElementById('m1StartDate').value = todayStr;
-  document.getElementById('m1EndDate').value = weekStr;
-  document.getElementById('gbgDate').value = todayStr;
+  elStart.value = todayStr;
+  elEnd.value = weekStr;
+  elGbg.value = todayStr;
 }
 setDateDefaults();
 window.scrollTo(0, 0);

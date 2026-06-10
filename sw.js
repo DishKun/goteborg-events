@@ -1,4 +1,4 @@
-const CACHE = 'goteborg-v9';
+const CACHE = 'goteborg-v11';
 const URLS = [
   './index.html',
   './manifest.json',
