@@ -1,4 +1,4 @@
-const CACHE = 'goteborg-v11';
+const CACHE = 'goteborg-v12';
 const URLS = [
   './index.html',
   './manifest.json',
@@ -20,6 +20,20 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
+  // API 和 Worker 代理请求使用网络优先，确保实时数据
+  if (e.request.url.includes('workers.dev') || e.request.url.includes('api.goteborg.com')) {
+    e.respondWith(
+      fetch(e.request).then(resp => {
+        if (resp.ok) {
+          const clone = resp.clone();
+          caches.open(CACHE).then(c => c.put(e.request, clone));
+        }
+        return resp;
+      }).catch(() => caches.match(e.request))
+    );
+    return;
+  }
+  
   // 只对 HTML 页面使用网络优先，确保始终拿到最新版本
   if (e.request.mode === 'navigate' || e.request.destination === 'document') {
     e.respondWith(
@@ -33,7 +47,7 @@ self.addEventListener('fetch', e => {
     );
     return;
   }
-  // 其他资源使用缓存优先
+  // 其他资源（图片、图标等）使用缓存优先
   e.respondWith(
     caches.match(e.request).then(r => r || fetch(e.request).then(resp => {
       if (resp.ok) {
