@@ -2296,7 +2296,7 @@ function parseAbfEventCards(html) {
       time = timeEls[0][2].trim();
     }
     
-    results.push({title, slug, date, time, place: place || 'Göteborg', free: true,
+    results.push({title, slug, date, time, place: place || 'Göteborg', free: null, price: null,
       source: 'abf', link: 'https://www.abf.se' + href});
   }
   return results;
@@ -2428,8 +2428,9 @@ function showAbfLoadMoreBtn() {
   const container = document.getElementById('abfEventsContainer');
   const div = document.createElement('div');
   div.id = 'abfLoadMoreBtn';
+  const label = abfIsCourse ? '课程' : '活动';
   div.style.cssText = 'text-align:center;margin:1.5rem 0';
-  div.innerHTML = '<button class="btn btn-primary" onclick="loadMoreAbf()" style="background:#b0060e;padding:0.7rem 2rem;font-size:1rem">📥 加载更多（' + (abfTotalPages - abfPage) + ' 页剩余）</button>'
+  div.innerHTML = '<button class="btn btn-primary" onclick="loadMoreAbf()" style="background:#b0060e;padding:0.7rem 2rem;font-size:1rem">📥 加载更多' + label + '（' + (abfTotalPages - abfPage) + ' 页剩余）</button>'
     + '<div id="abfInlineProgress" style="display:none;margin-top:0.8rem">'
     + '<div style="background:#333;border-radius:4px;height:8px;overflow:hidden;max-width:300px;margin:0 auto">'
     + '<div id="abfInlineFill" style="background:#b0060e;height:100%;width:0%;transition:width 0.3s"></div></div>'
@@ -2442,6 +2443,7 @@ async function loadMoreAbf() {
   const workerUrl = 'https://plain-meadow-437c.dishkun2012.workers.dev/api/abf';
   const BATCH_SIZE = 5;
   const type = abfIsCourse ? 'course' : 'event';
+  const label = abfIsCourse ? '课程' : '活动';
   
   // Show inline progress at the loadMore button position
   const inlineProg = document.getElementById('abfInlineProgress');
@@ -2466,21 +2468,21 @@ async function loadMoreAbf() {
       const resp = await fetch(workerUrl + '?type=' + type + '&page=' + p);
       if (!resp.ok) break;
       const html = await resp.text();
-      const courses = type === 'course' ? parseAbfCourseCards(html) : parseAbfEventCards(html);
-      if (courses.length === 0) break;
+      const items = type === 'course' ? parseAbfCourseCards(html) : parseAbfEventCards(html);
+      if (items.length === 0) break;
       
-      for (const c of courses) {
-        const slug = c.slug;
+      for (const item of items) {
+        const slug = item.slug;
         if (!abfAllCourses.some(e => e.slug === slug)) {
-          abfAllCourses.push(c);
+          abfAllCourses.push(item);
         }
       }
       abfPage = p;
       const pct = Math.round((p / abfTotalPages) * 100);
       pf.style.width = Math.min(100, pct) + '%';
-      pt.textContent = '第 ' + p + '/' + abfTotalPages + ' 页，共 ' + abfAllCourses.length + ' 个课程';
+      pt.textContent = '第 ' + p + '/' + abfTotalPages + ' 页，共 ' + abfAllCourses.length + ' 个' + label;
       if (inlineFill) inlineFill.style.width = Math.min(100, pct) + '%';
-      if (inlineText) inlineText.textContent = '第 ' + p + '/' + abfTotalPages + ' 页 · ' + abfAllCourses.length + ' 个课程';
+      if (inlineText) inlineText.textContent = '第 ' + p + '/' + abfTotalPages + ' 页 · ' + abfAllCourses.length + ' 个' + label;
     }
     
     abfKurserEvents = addCnToAbfData([...abfAllCourses]);
@@ -2489,11 +2491,11 @@ async function loadMoreAbf() {
     document.getElementById('abfLoadMoreBtn')?.remove();
     
     if (abfHasMore) {
-      pt.textContent = '✅ 已加载 ' + abfKurserEvents.length + ' 个课程（前 ' + abfPage + '/' + abfTotalPages + ' 页）';
+      pt.textContent = '✅ 已加载 ' + abfKurserEvents.length + ' 个' + label + '（前 ' + abfPage + '/' + abfTotalPages + ' 页）';
       pd.textContent = '数据来自 abf.se/vast/kurs-sok';
     } else {
       pf.style.width = '100%';
-      pt.textContent = '✅ 完成！共 ' + abfKurserEvents.length + ' 个课程（实时）';
+      pt.textContent = '✅ 完成！共 ' + abfKurserEvents.length + ' 个' + label + '（实时）';
       pd.textContent = '数据来自 abf.se/vast/kurs-sok';
     }
   } catch (e) {
@@ -2502,6 +2504,11 @@ async function loadMoreAbf() {
     if (inlineText) inlineText.textContent = '❌ 获取失败，请重试';
   }
   isFetchingAbf = false;
+  
+  // 如果是活动，补全价格信息
+  if (!abfIsCourse) {
+    await enrichAbfEventPrices(abfKurserEvents).catch(() => {});
+  }
   
   await enrichEvents(abfKurserEvents, {}, e => e.slug).catch(() => {});
   renderAbf('abfEventsContainer', abfKurserEvents);
@@ -2518,24 +2525,66 @@ async function fetchAbfEvent() {
   const pt = document.getElementById('abfProgressText'); const pd = document.getElementById('abfProgressDetail');
   pc.classList.add('show'); pf.style.width = '0%'; pt.textContent = '正在连接 abf.se ...';
   abfKurserEvents = [];
+  abfAllCourses = [];
+  abfPage = 1;
+  abfTotalPages = 1;
   
   try {
     const workerUrl = 'https://plain-meadow-437c.dishkun2012.workers.dev/api/abf';
-    const resp = await fetch(workerUrl + '?type=event&page=1');
-    if (!resp.ok) throw new Error('Worker unavailable');
-    const html = await resp.text();
     
-    const events = addCnToAbfData(parseAbfEventCards(html));
-    abfKurserEvents = events;
+    // 获取第1页，同时检测总页数
+    const firstResp = await fetch(workerUrl + '?type=event&page=1');
+    if (!firstResp.ok) throw new Error('Worker unavailable');
+    const firstHtml = await firstResp.text();
     
-    pf.style.width = '100%';
-    pt.textContent = '✅ 完成！共 ' + events.length + ' 个活动（实时）';
+    // 从分页链接中检测总页数
+    const pageLinks = [...firstHtml.matchAll(/page=(\d+)/g)];
+    const pages = pageLinks.map(m => parseInt(m[1]));
+    abfTotalPages = pages.length > 0 ? Math.max(...pages) : 1;
+    
+    // 解析第1页
+    let events = parseAbfEventCards(firstHtml);
+    abfAllCourses = abfAllCourses.concat(events);
+    
+    pf.style.width = Math.min(100, Math.round((abfPage / abfTotalPages) * 100)) + '%';
+    pt.textContent = '第 1/' + abfTotalPages + ' 页，已找到 ' + abfAllCourses.length + ' 个活动';
+    pd.textContent = '正在获取...';
+    
+    // 获取后续页面（每次批量5页）
+    const BATCH_SIZE = 5;
+    let batchEnd = Math.min(1 + BATCH_SIZE - 1, abfTotalPages);
+    for (let p = 2; p <= batchEnd; p++) {
+      await sleep(80);
+      const resp = await fetch(workerUrl + '?type=event&page=' + p);
+      if (!resp.ok) break;
+      const html = await resp.text();
+      const pageEvents = parseAbfEventCards(html);
+      if (pageEvents.length === 0) break;
+      abfAllCourses = abfAllCourses.concat(pageEvents);
+      abfPage = p;
+      pf.style.width = Math.min(100, Math.round((p / abfTotalPages) * 100)) + '%';
+      pt.textContent = '第 ' + p + '/' + abfTotalPages + ' 页，已找到 ' + abfAllCourses.length + ' 个活动';
+    }
+    
+    abfKurserEvents = addCnToAbfData(abfAllCourses);
+    
+    if (abfPage < abfTotalPages) {
+      pt.textContent = '✅ 已加载 ' + abfKurserEvents.length + ' 个活动（前 ' + abfPage + '/' + abfTotalPages + ' 页）';
+      pd.textContent = '数据来自 abf.se/vast/kurs-sok';
+      abfHasMore = true;
+      abfIsCourse = false;
+    } else {
+      pf.style.width = '100%';
+      pt.textContent = '✅ 完成！共 ' + abfKurserEvents.length + ' 个活动（实时）';
+      pd.textContent = '数据来自 abf.se/vast/kurs-sok';
+      abfHasMore = false;
+    }
   } catch (e) {
     console.log('ABF Worker unavailable:', e.message);
     pt.textContent = '无法连接 abf.se，使用本地缓存...';
     abfKurserEvents = [];
     for (let i = 0; i < ABF_EVENTS.length; i++) {
-      abfKurserEvents.push({...ABF_EVENTS[i], source: 'abf'});
+      abfKurserEvents.push({...ABF_EVENTS[i], source: 'abf', free: null, price: null});
       pf.style.width = Math.round(((i+1)/ABF_EVENTS.length)*100) + '%';
       pt.textContent = '已加载 ' + (i+1) + '/' + ABF_EVENTS.length + ' 个（缓存）';
       await sleep(40);
@@ -2548,8 +2597,93 @@ async function fetchAbfEvent() {
   isFetchingAbf = false;
   
   document.getElementById('abfEventsContainer').innerHTML = '<div class="empty-state"><div class="icon">🔄</div><p>正在加载，请稍……</p></div>';
+  
+  // 补全价格信息（从详情页抓取）
+  await enrichAbfEventPrices(abfKurserEvents).catch(() => {});
+  
   await enrichEvents(abfKurserEvents, {}, e => e.slug).catch(() => {});
   renderAbf('abfEventsContainer', abfKurserEvents);
+  if (abfHasMore) showAbfLoadMoreBtn();
+}
+
+// 从ABF活动详情页获取价格信息
+// 从详情页HTML中提取价格
+function parseAbfPriceFromHtml(html) {
+  const prisSection = html.match(/Pris<\/h3>\s*<p[^>]*class="[^"]*HeroBlock-CourseInfo-Text[^"]*"[^>]*>([^<]+)<\/p>/);
+  if (!prisSection) return null; // 未找到价格信息
+  const priceText = prisSection[1].trim();
+  if (priceText.toLowerCase() === 'gratis' || priceText === '' || priceText === '0:-') {
+    return { free: true, price: '' };
+  }
+  return { free: false, price: priceText };
+}
+
+async function fetchAbfEventDetail(slug) {
+  // 尝试通过Worker代理获取
+  const workerUrl = 'https://plain-meadow-437c.dishkun2012.workers.dev/api/abf-detail';
+  try {
+    const resp = await fetch(workerUrl + '?slug=' + encodeURIComponent(slug));
+    if (resp.ok) return await resp.text();
+  } catch (_) {}
+  // 如果Worker不可用，尝试直连（可能因CORS失败）
+  try {
+    const resp = await fetch('https://www.abf.se/vast/kurs/' + encodeURIComponent(slug) + '/', {
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
+    if (resp.ok) return await resp.text();
+  } catch (_) {}
+  return null;
+}
+
+async function enrichAbfEventPrices(events) {
+  const NEED_PRICE = events.filter(e => (e.free === null || e.free === undefined) && (e.price === null || e.price === undefined) && e.slug);
+  if (NEED_PRICE.length === 0) return;
+  
+  const pc = document.getElementById('abfProgressContainer');
+  const pf = document.getElementById('abfProgressFill');
+  const pt = document.getElementById('abfProgressText');
+  const pd = document.getElementById('abfProgressDetail');
+  
+  pc.classList.add('show');
+  pt.textContent = '正在获取活动价格信息...';
+  pd.textContent = '共 ' + NEED_PRICE.length + ' 个活动，通过Worker代理';
+  
+  // 分批获取，每批5个并发
+  const BATCH = 5;
+  let fetched = 0;
+  for (let i = 0; i < NEED_PRICE.length; i += BATCH) {
+    const batch = NEED_PRICE.slice(i, i + BATCH);
+    const results = await Promise.allSettled(batch.map(async (e) => {
+      const html = await fetchAbfEventDetail(e.slug);
+      if (!html) return null;
+      return parseAbfPriceFromHtml(html);
+    }));
+    
+    for (let j = 0; j < results.length; j++) {
+      const r = results[j];
+      if (r.status === 'fulfilled' && r.value) {
+        batch[j].free = r.value.free;
+        batch[j].price = r.value.price;
+        fetched++;
+      }
+    }
+    
+    const pct = Math.min(100, Math.round(((i + BATCH) / NEED_PRICE.length) * 100));
+    pf.style.width = pct + '%';
+    pt.textContent = '价格信息 ' + Math.min(i + BATCH, NEED_PRICE.length) + '/' + NEED_PRICE.length + '（成功' + fetched + '）';
+  }
+  
+  pf.style.width = '100%';
+  const failedCount = NEED_PRICE.length - fetched;
+  pt.textContent = failedCount > 0 ? '⚠️ 价格信息获取完成，' + failedCount + ' 个未获取到（已标记为免费）' : '✅ 价格信息获取完成';
+  
+  // 对仍未获取到价格的活动标记为免费（默认）
+  for (const e of events) {
+    if (e.free === null || e.free === undefined) {
+      e.free = true;
+      e.price = '';
+    }
+  }
 }
 
 
