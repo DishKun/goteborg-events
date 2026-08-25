@@ -342,10 +342,15 @@
 
 <button class="sticky-collapse" id="floatCollapse" onclick="toggleCurrentModule()" style="display:none">📋</button>
 
-<button class="sticky-collapse" id="btnM1" onclick="scrollToModule('eventsContainer')" style="bottom:20px;left:20px;right:auto">📋 跳转到Gothenburg 活动</button>
-<button class="sticky-collapse" id="btnM2" onclick="scrollToModule('kompisEventsContainer')" style="bottom:64px;left:20px;right:auto">📋 跳转到Kompis 活动</button>
-<button class="sticky-collapse" id="btnM3" onclick="scrollToModule('gbgEventsContainer')" style="bottom:108px;left:20px;right:auto">📋 跳转到市政厅活动</button>
-<button class="sticky-collapse" id="btnM4" onclick="scrollToModule('abfEventsContainer')" style="bottom:152px;left:20px;right:auto">📋 跳转到ABF 活动</button>
+<!-- ========== 左下角跳转菜单（可展开/收起） ========== -->
+<div id="jumpMenu" style="display:none;position:fixed;left:20px;bottom:64px;z-index:998;flex-direction:column;gap:0.4rem">
+  <button class="sticky-collapse" style="position:static" onclick="jumpTo('eventsContainer')">📋 Gothenburg 活动</button>
+  <button class="sticky-collapse" style="position:static" onclick="jumpTo('kompisEventsContainer')">📋 Kompis 活动</button>
+  <button class="sticky-collapse" style="position:static" onclick="jumpTo('gbgEventsContainer')">📋 市政厅活动</button>
+  <button class="sticky-collapse" style="position:static" onclick="jumpTo('abfEventsContainer')">📋 ABF 活动</button>
+  <button class="sticky-collapse" style="position:static" onclick="collapseJumpMenu()">📋 收起</button>
+</div>
+<button class="sticky-collapse" id="btnJumpToggle" onclick="toggleJumpMenu()" style="bottom:20px;left:20px;right:auto">🧭 跳转</button>
 
 <div class="header">
   <h1>🎭 哥德堡活动</h1>
@@ -437,6 +442,12 @@
   <button class="btn btn-primary" id="fetchGbgBtn" onclick="fetchGbgEvents()" style="background:#3b6e1e">
     🔄 获取市政府活动
   </button>
+  <button class="btn btn-outline" id="fetchOpalBtn" onclick="fetchSearchEvents('opal')" style="border-color:#3b6e1e;color:#3b6e1e">
+    💎 Opal活动
+  </button>
+  <button class="btn btn-outline" id="fetchFrolundaBtn" onclick="fetchSearchEvents('frolunda')" style="border-color:#3b6e1e;color:#3b6e1e">
+    💎 Frölunda活动
+  </button>
 </div>
 
 <div class="progress-container" id="gbgProgressContainer">
@@ -453,6 +464,42 @@
   <div class="empty-state">
     <div class="icon">🏛️</div>
     <p>👆 选择日期后点击「获取市政府活动」按钮</p>
+  </div>
+</div>
+
+<!-- ========== 模块3b: Opal 活动搜索结果（未来一个月） ========== -->
+<div class="progress-container" id="opalProgressContainer">
+  <div class="progress-bar"><div class="progress-fill" id="opalProgressFill"></div></div>
+  <div class="progress-text" id="opalProgressText">准备中...</div>
+  <div class="progress-detail" id="opalProgressDetail"></div>
+</div>
+
+<div class="stats-bar" id="opalStatsBar">
+  <div class="stat"><span class="emoji">📊</span> 共 <strong id="opalStatTotal">0</strong> 个活动</div>
+</div>
+
+<div class="container" id="opalEventsContainer" style="position:relative">
+  <div class="empty-state">
+    <div class="icon">💎</div>
+    <p>👆 点击上方「💎 Opal活动」按钮查看未来一个月活动</p>
+  </div>
+</div>
+
+<!-- ========== 模块3c: Frölunda 活动搜索结果（未来一个月） ========== -->
+<div class="progress-container" id="frolundaProgressContainer">
+  <div class="progress-bar"><div class="progress-fill" id="frolundaProgressFill"></div></div>
+  <div class="progress-text" id="frolundaProgressText">准备中...</div>
+  <div class="progress-detail" id="frolundaProgressDetail"></div>
+</div>
+
+<div class="stats-bar" id="frolundaStatsBar">
+  <div class="stat"><span class="emoji">📊</span> 共 <strong id="frolundaStatTotal">0</strong> 个活动</div>
+</div>
+
+<div class="container" id="frolundaEventsContainer" style="position:relative">
+  <div class="empty-state">
+    <div class="icon">💎</div>
+    <p>👆 点击上方「💎 Frölunda活动」按钮查看未来一个月活动</p>
   </div>
 </div>
 
@@ -818,6 +865,29 @@ function scrollToModule(id) {
     const header = el.getBoundingClientRect().top + window.scrollY - 80;
     window.scrollTo({ top: header, behavior: 'smooth' });
   }
+}
+
+// ========== 左下角跳转菜单 ==========
+function toggleJumpMenu() {
+  const menu = document.getElementById('jumpMenu');
+  const toggle = document.getElementById('btnJumpToggle');
+  const expanded = menu.style.display === 'flex';
+  menu.style.display = expanded ? 'none' : 'flex';
+  toggle.style.display = expanded ? '' : 'none';
+}
+
+function collapseJumpMenu() {
+  document.getElementById('jumpMenu').style.display = 'none';
+  document.getElementById('btnJumpToggle').style.display = '';
+}
+
+function jumpTo(id) {
+  // 市政厅活动在模块3 单视图下可能被隐藏，跳转前先切换到该视图
+  if (id === 'gbgEventsContainer' && typeof showModule3Section === 'function') {
+    showModule3Section('gbg');
+  }
+  scrollToModule(id);
+  collapseJumpMenu();
 }
 
 function markModuleLoaded(containerId) {
@@ -1785,7 +1855,8 @@ let isFetchingGbg = false;
 async function fetchGbgEvents() {
   if (isFetchingGbg) return;
   isFetchingGbg = true;
-  
+  showModule3Section('gbg');
+
   const btn = document.getElementById('fetchGbgBtn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> 获取中...';
@@ -1869,7 +1940,7 @@ async function fetchGbgEvents() {
   pd.textContent = '数据来自 goteborg.se';
   
   btn.disabled = false;
-  btn.innerHTML = '\ud83d\udd04 重新获取';
+  btn.innerHTML = '\ud83d\udd04 获取市政府活动';
   isFetchingGbg = false;
   
   document.getElementById('gbgEventsContainer').innerHTML = '<div class="empty-state"><div class="icon">\ud83d\udd04</div><p>正在加载，请稍……</p></div>';
@@ -1945,6 +2016,241 @@ function loadMoreGbg() { renderGbgEvents(); }
 
 function updateGbgStats() {
   document.getElementById('gbgStatTotal').textContent = gbgEvents.length;
+}
+
+// ========== 模块3b/3c: 关键词搜索活动（Opal / Frölunda，未来一个月范围） ==========
+// 通用搜索模块注册表：新增关键词只需在此加一项 + 对应 HTML 按钮/容器
+const SEARCH_MODULES = {
+  opal: {
+    term: 'opal', label: 'Opal', icon: '💎',
+    btnId: 'fetchOpalBtn', containerId: 'opalEventsContainer',
+    progressContainerId: 'opalProgressContainer', progressFillId: 'opalProgressFill',
+    progressTextId: 'opalProgressText', progressDetailId: 'opalProgressDetail',
+    statsBarId: 'opalStatsBar', statTotalId: 'opalStatTotal',
+    events: [], fetching: false,
+  },
+  frolunda: {
+    term: 'frölunda', label: 'Frölunda', icon: '💎',
+    btnId: 'fetchFrolundaBtn', containerId: 'frolundaEventsContainer',
+    progressContainerId: 'frolundaProgressContainer', progressFillId: 'frolundaProgressFill',
+    progressTextId: 'frolundaProgressText', progressDetailId: 'frolundaProgressDetail',
+    statsBarId: 'frolundaStatsBar', statTotalId: 'frolundaStatTotal',
+    events: [], fetching: false,
+  },
+};
+
+// 将瑞典语日期文本（如 "Tisdag 25 augusti"）解析为 ISO 日期，
+// 自动判断年份：若该日期已早于今天则视为明年。
+function resolveSwedishDate(text) {
+  const monthMap = {
+    januari:'01', jan:'01', februari:'02', feb:'02', mars:'03', mar:'03',
+    april:'04', apr:'04', maj:'05', juni:'06', jun:'06', juli:'07', jul:'07',
+    augusti:'08', aug:'08', september:'09', sep:'09', oktober:'10', okt:'10',
+    november:'11', nov:'11', december:'12', dec:'12'
+  };
+  const match = String(text || '').toLowerCase().match(/\b(\d{1,2})\s+(januari|jan|februari|feb|mars|mar|april|apr|maj|juni|jun|juli|jul|augusti|aug|september|sep|oktober|okt|november|nov|december|dec)\b/);
+  if (!match) return '';
+  const day = match[1].padStart(2, '0');
+  const month = monthMap[match[2]];
+  // 在去年/今年/明年三个候选中，选离今天最近的一个年份。
+  // 既能正确处理跨年（如今天 12 月时查到的 1 月活动归明年），
+  // 也不会把正在展出的、起始日期已过的长期活动错误推到明年。
+  const now = new Date();
+  const y = now.getFullYear();
+  let bestYear = y, bestDiff = Infinity;
+  for (const yy of [y - 1, y, y + 1]) {
+    const cand = new Date(yy, parseInt(month, 10) - 1, parseInt(day, 10));
+    const diff = Math.abs(cand - now);
+    if (diff < bestDiff) { bestDiff = diff; bestYear = yy; }
+  }
+  return bestYear + '-' + month + '-' + day;
+}
+
+// 将 Date 对象格式化为 ISO 日期字符串（本地时区）
+function formatISODate(d) {
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+
+async function fetchSearchEvents(moduleId) {
+  const m = SEARCH_MODULES[moduleId];
+  if (!m || m.fetching) return;
+  m.fetching = true;
+  showModule3Section(moduleId);
+
+  const btn = document.getElementById(m.btnId);
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 获取中...';
+
+  const pc = document.getElementById(m.progressContainerId);
+  const pf = document.getElementById(m.progressFillId);
+  const pt = document.getElementById(m.progressTextId);
+  const pd = document.getElementById(m.progressDetailId);
+
+  // 计算查询日期范围：从今天起一个月（根据当前日期实时匹配）
+  const now = new Date();
+  const fromDate = formatISODate(now);
+  const toDate = formatISODate(new Date(now.getFullYear(), now.getMonth() + 1, now.getDate()));
+
+  pc.classList.add('show');
+  pf.style.width = '0%';
+  pt.textContent = `正在查询 ${fromDate} 至 ${toDate} 的 ${m.label} 活动...`;
+  pd.textContent = '连接 goteborg.se ...';
+
+  m.events = [];
+
+  try {
+    const workerUrl = 'https://plain-meadow-437c.dishkun2012.workers.dev/api/gbg';
+    const seen = new Set();
+
+    for (let page = 0; page < 20; page++) {
+      const resp = await fetch(`${workerUrl}?search=${encodeURIComponent(m.term)}&fromDate=${fromDate}&toDate=${toDate}&page=${page}`);
+      if (!resp.ok) break;
+      const html = await resp.text();
+
+      const blocks = html.split('data-testid="kalendarium-activity"');
+      if (blocks.length < 2 && page > 0) break;
+
+      let newCount = 0;
+      for (const block of blocks.slice(1)) {
+        const aidM = block.match(/activityId=([a-f0-9-]+)/);
+        if (!aidM) continue;
+        const aid = aidM[1];
+        if (seen.has(aid)) continue;
+        seen.add(aid);
+
+        const titleM = block.match(/class="c-card__title-link"[^>]*>([^<]+)</);
+        const orgM = block.match(/class="c-card__byline">([^<]+)</);
+        const timeM = block.match(/<dd class="c-label-value-list__value">([^<]+)<\/dd>/g);
+
+        const title = titleM ? titleM[1].trim() : '';
+        const org = orgM ? orgM[1].trim() : '';
+        const timeVals = timeM ? timeM.map(m => m.match(/>([^<]+)</)[1].trim()) : [];
+        // timeVals[0] = Datum（瑞典语日期文本），timeVals[1] = Tid（时间）
+        const dateStr = resolveSwedishDate(timeVals[0] || '');
+        const time = timeVals.length > 1 ? timeVals[1] : '';
+
+        const cnInfo = getCnForEvent(title, org, m3CnLookup, aid);
+        m.events.push({title, date: dateStr, time, place: org, aid, cn:cnInfo.cn, summary:cnInfo.summary});
+        newCount++;
+      }
+
+      if (newCount === 0) break;
+
+      pf.style.width = Math.min(100, Math.round(((page+1)/10)*100)) + '%';
+      pt.textContent = `已获取第 ${page+1} 页`;
+      pd.textContent = `已找到 ${m.events.length} 个活动`;
+      await sleep(50);
+    }
+
+    if (m.events.length === 0) throw new Error('No events');
+    pf.style.width = '100%';
+    pt.textContent = `✅ 完成！${fromDate} 至 ${toDate} 共 ${m.events.length} 个 ${m.label} 活动（实时）`;
+  } catch (e) {
+    console.log('Proxy unavailable:', e.message);
+    pf.style.width = '100%';
+    pt.textContent = '⚠️ 无法连接 goteborg.se，请检查网络后重试';
+    m.events = [];
+  }
+  pd.textContent = `数据来自 goteborg.se 搜索结果（${fromDate} 至 ${toDate}）`;
+
+  btn.disabled = false;
+  btn.innerHTML = m.icon + ' ' + m.label + '活动';
+  m.fetching = false;
+
+  document.getElementById(m.containerId).innerHTML = '<div class="empty-state"><div class="icon">🔄</div><p>正在加载，请稍……</p></div>';
+  await enrichEvents(m.events, m3CnLookup, e => e.aid).catch(() => {});
+  updateSearchStats(moduleId);
+  delete renderPages[m.containerId];
+  renderSearchEvents(moduleId);
+}
+
+function renderSearchEvents(moduleId) {
+  const m = SEARCH_MODULES[moduleId];
+  if (!m) return;
+  const container = document.getElementById(m.containerId);
+  const statsBar = document.getElementById(m.statsBarId);
+
+  if (m.events.length === 0) {
+    container.innerHTML = `<div class="empty-state"><div class="icon">🔍</div><p>没有找到 ${m.label} 相关活动</p></div>`;
+    if (statsBar) statsBar.classList.remove('show');
+    return;
+  }
+
+  if (statsBar) statsBar.classList.add('show');
+
+  const shown = renderPages[m.containerId] || 0;
+  const batch = m.events.slice(0, shown + PAGE_SIZE);
+  renderPages[m.containerId] = batch.length;
+
+  const groups = {};
+  for (const e of batch) {
+    const key = e.date || '日期待定';
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(e);
+  }
+
+  const sortedDates = Object.keys(groups).sort();
+
+  let html = '';
+  for (const dateStr of sortedDates) {
+    const dayEvents = groups[dateStr];
+    const d = new Date(dateStr);
+    const label = Number.isNaN(d.getTime())
+      ? dateStr
+      : `${d.getMonth()+1}月${d.getDate()}日 ${['周日','周一','周二','周三','周四','周五','周六'][d.getDay()]}`;
+    html += `
+    <div class="date-group">
+      <div class="date-label">
+        📅 ${label}
+        <span class="count">${dayEvents.length}</span>
+      </div>`;
+
+    for (const e of dayEvents) {
+      const linkUrl = `https://goteborg.se/wps/portal/kalendarium/kalendarium-start?activityId=${e.aid}`;
+      const cnDisplay = e.cn ? ` <span class="cn">/ ${e.cn}</span>` : '';
+
+      html += `
+      <div class="event-card">
+        <div class="event-title">
+          <a href="${linkUrl}" target="_blank" rel="noopener">${e.title}${cnDisplay}</a>
+        </div>
+        <div class="event-meta">
+          <span>⏰ ${e.time || '全天'}</span>
+          <span>📍 ${e.place}</span>
+        </div>
+        ${e.summary ? `<div class="event-summary">📝 ${e.summary}</div>` : ''}
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  if (m.events.length > batch.length) html += `<button class="load-more-btn" onclick="loadMoreSearch('${moduleId}')">📥 继续浏览更多活动 (${batch.length} 已显示)...</button>`;
+  container.innerHTML = html;
+  addInterestButtons(container, batch);
+  updateSearchStats(moduleId);
+}
+
+function loadMoreSearch(moduleId) { renderSearchEvents(moduleId); }
+
+function updateSearchStats(moduleId) {
+  const m = SEARCH_MODULES[moduleId];
+  if (!m) return;
+  const el = document.getElementById(m.statTotalId);
+  if (el) el.textContent = m.events.length;
+}
+
+// 模块3 单视图切换：一次只展示一种活动（市政府 / Opal / Frölunda），其余隐藏
+function showModule3Section(activeId) {
+  const gbgEls = ['gbgProgressContainer', 'gbgStatsBar', 'gbgEventsContainer'];
+  const ids = ['gbg', ...Object.keys(SEARCH_MODULES)];
+  for (const id of ids) {
+    const els = (id === 'gbg') ? gbgEls : [SEARCH_MODULES[id].progressContainerId, SEARCH_MODULES[id].statsBarId, SEARCH_MODULES[id].containerId];
+    const show = (id === activeId);
+    for (const elId of els) {
+      const el = document.getElementById(elId);
+      if (el) el.style.display = show ? '' : 'none';
+    }
+  }
 }
 
 </script>
@@ -2892,7 +3198,7 @@ function refreshIcons() {
     el.setAttribute('aria-label', active ? '取消感兴趣' : '加入感兴趣');
   });
 }
-document.addEventListener('DOMContentLoaded', () => { refreshSidebar(); refreshIcons(); });
+document.addEventListener('DOMContentLoaded', () => { refreshSidebar(); refreshIcons(); showModule3Section('gbg'); });
 </script>
 
 <div class="sidebar" id="interestSidebar">
