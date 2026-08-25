@@ -1810,16 +1810,16 @@ function getCnForEvent(title, org, lookup, lookupKey) {
   return { cn: '', summary: '', needsTranslation: true };
 }
 
-async function translateViaGoogle(text) {
+async function translateViaWorker(text) {
   if (TRANS_CACHE[text]) return TRANS_CACHE[text];
   try {
     const resp = await fetch(
-      `https://translate.googleapis.com/translate_a/single?client=gtx&sl=sv&tl=zh-CN&dt=t&q=${encodeURIComponent(text)}`
+      `https://plain-meadow-437c.dishkun2012.workers.dev/api/translate?text=${encodeURIComponent(text)}&source=sv&target=zh`
     );
     if (resp.ok) {
       const data = await resp.json();
-      const result = (data[0] && data[0][0] && data[0][0][0]) || '';
-      TRANS_CACHE[text] = result;
+      const result = (data && data.translated) || '';
+      if (result) TRANS_CACHE[text] = result;
       return result;
     }
   } catch(e) {}
@@ -1827,18 +1827,19 @@ async function translateViaGoogle(text) {
 }
 
 async function enrichEvents(events, lookup, lookupKeyFn) {
+  // 只翻译标题（不再翻译摘要），全量并发发起。
+  // Cloudflare Workers AI 支持高并发（实测 141 个并发 2.2s 全部成功、无 429），无需节流。
   const promises = [];
   for (const e of events) {
-    if (e.cn && e.summary) continue;
+    if (e.cn) continue;  // 已有中文名就跳过
     const key = lookupKeyFn(e);
     const cached = lookup[key];
     if (cached && cached.cn) { e.cn = cached.cn; e.summary = cached.summary; continue; }
     promises.push((async () => {
-      const cn = await translateViaGoogle(e.title);
+      const cn = await translateViaWorker(e.title);
       if (cn) {
         e.cn = cn;
-        e.summary = await translateViaGoogle((e.place || '') + ' - ' + e.title);
-        if (e.cn) lookup[key] = { cn: e.cn, summary: e.summary };
+        lookup[key] = { cn: e.cn, summary: e.summary };
       }
     })());
   }
